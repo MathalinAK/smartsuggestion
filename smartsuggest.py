@@ -23,7 +23,7 @@ def get_gemini_title(text):
     prompt = (
         f"Based on the following content, generate a **catchy, engaging, and well-structured** title that "
         f"grabs attention and clearly represents the main idea:\n\n{text[:2000]}\n\n"
-        "Ensure the title is **one** and it has to be concise, compelling, and naturally encourages readers to explore the topic."
+        f"Ensure the title is **strictly one**, clear, engaging, and accurately represents the main idea."
     )
     response = model.generate_content(prompt)
     return response.text.strip()
