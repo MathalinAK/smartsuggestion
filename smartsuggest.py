@@ -23,19 +23,30 @@ def get_gemini_title(text):
     prompt = (
         f"Based on the following content, generate a **catchy, engaging, and well-structured** title that "
         f"grabs attention and clearly represents the main idea:\n\n{text[:2000]}\n\n"
-        f"Ensure the title is **strictly one**, clear, engaging, and accurately represents the main idea."
+        "Ensure the title is **strictly one**, clear, engaging, and accurately represents the main idea."
     )
     response = model.generate_content(prompt)
     return response.text.strip()
-def get_gemini_keywords(title):
+def get_gemini_keywords(title, text):
     model = genai.GenerativeModel("gemini-1.5-flash")
+    
     prompt = (
-        f"Generate 10 to 15 relevant keywords based on the following title:\n\n"
-        f"Title: {title}\n\n"
-        "Provide the keywords as a *comma-separated* list without any numbering."
+        f"Extract **15 to 20 highly relevant keywords** from the following content:\n\n"
+        f"Title: {title}\n\nContent:\n{text[:2000]}\n\n"
+        "- Focus on **key concepts, technical terms, industry-specific words, and important ideas**.\n"
+        "- **Ignore common words, numbers, dates, locations, and generic terms** (e.g., '12th', 'Nepal', 'Kailali').\n"
+        "- Provide the keywords as a **comma-separated list** without numbering.\n"
+        "- Ensure at least **15 keywords** are extracted. If fewer than 15 are found, use synonyms or related terms."
     )
+    
     response = model.generate_content(prompt)
-    return list(set(response.text.strip().split(", ")))
+    keywords = list(set(response.text.strip().split(", ")))
+    if len(keywords) < 15:
+        prompt += "\nReturn exactly **15-20 keywords** by expanding on key ideas, synonyms, and technical terms."
+        response = model.generate_content(prompt)
+        keywords = list(set(response.text.strip().split(", ")))
+
+    return keywords[:20]  
 
 # Generate three well-structured articles
 def generate_articles():
@@ -164,10 +175,11 @@ if uploaded_file is not None:
         if extracted_text:
             with st.spinner("Generating title and keywords..."):
                 title = get_gemini_title(extracted_text)
-                keywords = get_gemini_keywords(title)
+                keywords = get_gemini_keywords(title, extracted_text) 
 
             st.session_state.title = title
             st.session_state.keywords = keywords
+
 
     if st.session_state.title:
         st.subheader("Suggested Title:")
