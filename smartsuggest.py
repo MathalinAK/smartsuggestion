@@ -1,3 +1,6 @@
+import sys
+import sqlite3
+sys.modules["pysqlite3"] = sqlite3 
 import os
 import streamlit as st
 from PyPDF2 import PdfReader
