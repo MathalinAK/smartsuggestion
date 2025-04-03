@@ -1,14 +1,10 @@
 import sys
 import sqlite3
-
-# Force newer SQLite version - critical for Streamlit Cloud
 if sqlite3.sqlite_version_info < (3, 35, 0):
     try:
-        # First try to use pysqlite3 if available
         __import__('pysqlite3')
         sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
     except ImportError:
-        # Fallback: Patch ChromaDB to accept older SQLite
         from chromadb.utils import embedding_functions
         embedding_functions._sqlite3 = sqlite3
         sys.modules['sqlite3'] = sqlite3
@@ -63,7 +59,7 @@ def pdf_to_limited_chunks(pdf_file, chunk_size=700, chunk_overlap=100):  # Reduc
         )
         all_chunks = splitter.split_text(text)
         st.session_state.all_chunks = all_chunks  
-        return all_chunks[:5]  # Reduced number of chunks for initial processing
+        return all_chunks[:5]  
     except Exception as e:
         st.error(f"Error processing PDF: {str(e)}")
         return []
@@ -82,7 +78,6 @@ def generate_title(chunks):
         return ""
         
     llm = get_llm(temperature=0.7)
-    # Only use the first two chunks to avoid timeouts
     combined = "\n\n".join(chunks[:2])
     
     prompt = f"""
@@ -131,7 +126,7 @@ def analyze_keywords(keywords, audience):
     Keywords: {", ".join(keywords)}
     
     For each keyword, provide:
-    if the keyword matches the target audience, if yes say "yes" else "no" and give a one-line description.
+    if the keyword matches the target audience,and say who the keyword is relevant to the target audience
     
     Format your response as a bulleted list with clear separation between keywords.
     """
@@ -139,22 +134,18 @@ def analyze_keywords(keywords, audience):
     return llm.invoke(prompt).content
 
 def generate_article(title, keywords, chunks):
-    """Generate article based on title and keywords with error handling and retries"""
+    """Generate article based on title and keywords with error handling and metries"""
     max_retries = 3
     retry_count = 0
     
     while retry_count < max_retries:
         try:
-            # Use fewer chunks to reduce embedding time
             selected_chunks = chunks[:10] if len(chunks) > 10 else chunks
-            
-            # Use a smaller batch size for embeddings
             embeddings = GoogleGenerativeAIEmbeddings(
                 model="models/embedding-001",
                 google_api_key=google_api_key
             )
             
-            # Process in smaller batches if needed
             batch_size = 5
             processed_chunks = []
             
@@ -166,24 +157,15 @@ def generate_article(title, keywords, chunks):
                         embedding=embeddings,
                         collection_name=f"temp_collection_{i}"
                     )
-                    
-                    # Get relevant docs from this batch
-                    query = f"{title}. Keywords: {', '.join(keywords[:5])}"  # Use fewer keywords
+                    query = f"{title}. Keywords: {', '.join(keywords[:5])}" 
                     relevant_docs_batch = vector_store_batch.similarity_search(query, k=2)
                     processed_chunks.extend([doc.page_content for doc in relevant_docs_batch])
                 except Exception as e:
-                    
                     continue
-            
-            # If we have no processed chunks, use the original chunks directly
             if not processed_chunks and selected_chunks:
-                processed_chunks = selected_chunks[:5]  # Use only a few chunks if embedding failed
-                
-            # Get the relevant content
-            relevant_content = "\n\n".join(processed_chunks[:5])  # Limit to 5 chunks maximum
-            
+                processed_chunks = selected_chunks[:5]  
+            relevant_content = "\n\n".join(processed_chunks[:5]) 
             llm = get_llm(temperature=0.5)
-            
             prompt = f"""
             Write one comprehensive, engaging article about: {title}
             ** Easy to Read Make the Article more crisper, more engaging style **
@@ -234,7 +216,7 @@ def generate_article(title, keywords, chunks):
                 return "Failed to generate article due to timeout. Please try with a smaller document or fewer keywords."
             
             st.warning(f"Attempt {retry_count} failed. Retrying with simplified approach...")
-            time.sleep(2)  # Add a small delay between retries
+            time.sleep(2)  
     
     return None
 
@@ -244,12 +226,8 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
         selected_tone = tone.split(" ")[0].lower() if tone != "Custom ✏️" else custom_tone.lower()
         temperature = 0.7 if selected_tone == "humorous" else 0.5
         llm = get_llm(temperature=temperature)
-        
-        # Limit article content to reduce processing time
         max_content_length = 2000
         article_preview = article_content[:max_content_length] + ("..." if len(article_content) > max_content_length else "")
-        
-        # Limit keywords for efficiency
         limited_keywords = keywords[:5] if len(keywords) > 5 else keywords
         
         post_prompts = {
@@ -266,7 +244,7 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
                 - **Credibility** – Back insights with data or examples
                 - **SEO Optimization** – Use keywords: {', '.join(limited_keywords)}
                 - **Call to Action** – End with a discussion prompt
-                
+                -**content has to be like human written and more crisp short etc*
                 ### Tone-Specific Enhancements:
                 {"- Use emojis and casual language" if selected_tone == "casual" else ""}
                 {"- Maintain professional terminology" if selected_tone == "formal" else ""}
@@ -317,7 +295,7 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
                 - Use **2-5 hashtags & 1 emoji** for reach.  
                 - Tag someone or add a **link** if relevant.  
                 - Ensure it's **engaging & optimized for interaction**.
-                
+                - **content has to be like human written and more crisp short etc*
                 **Tone Guidelines:**
                 {"- Casual, conversational" if selected_tone == "casual" else ""}
                 {"- Professional but concise" if selected_tone == "formal" else ""}
@@ -341,7 +319,7 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
                 Write a **clear, action-driven CTA** that encourages interaction.  
                 Optimize for **mobile readability** & **avoid spam triggers**.  
                 Keep it **engaging, relevant & thought-provoking**.
-                
+                **content has to be like human written and more crisp short etc*
                 **Tone Guidelines:**
                 {"- Friendly and approachable" if selected_tone == "casual" else ""}
                 {"- Formal and professional" if selected_tone == "formal" else ""}
@@ -368,8 +346,6 @@ def refine_article(current_article, refinement_instruction, keywords):
     """Refine article based on user instructions"""
     try:
         llm = get_llm(temperature=0.4)
-        
-        # Limit keywords for efficiency
         limited_keywords = keywords[:5] if len(keywords) > 5 else keywords
         
         refine_prompt = f"""
