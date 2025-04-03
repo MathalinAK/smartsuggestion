@@ -1,7 +1,7 @@
 version0.py
 name.py
 budget_speech.pdf
-requirement.txt
-.devcontainer/
 chroma_db/
-requirements.txt
+__pycache__/
+.devcontainer/
+*.sqlite3
