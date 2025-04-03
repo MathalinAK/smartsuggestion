@@ -6,4 +6,4 @@ langchain-community
 python-dotenv
 pysqlite3-binary
 chromadb==0.4.24
-sqlite3
+
