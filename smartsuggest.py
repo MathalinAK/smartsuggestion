@@ -1,6 +1,17 @@
 import sys
 import sqlite3
-sys.modules["pysqlite3"] = sqlite3 
+
+# Force newer SQLite version - critical for Streamlit Cloud
+if sqlite3.sqlite_version_info < (3, 35, 0):
+    try:
+        # First try to use pysqlite3 if available
+        __import__('pysqlite3')
+        sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+    except ImportError:
+        # Fallback: Patch ChromaDB to accept older SQLite
+        from chromadb.utils import embedding_functions
+        embedding_functions._sqlite3 = sqlite3
+        sys.modules['sqlite3'] = sqlite3
 import os
 import streamlit as st
 from PyPDF2 import PdfReader
@@ -135,7 +146,7 @@ def generate_article(title, keywords, chunks):
         texts=chunks,
         embedding=embeddings,
         collection_name="temp_collection"
-        ) 
+        )
 
             
         query = f"{title}. Keywords: {', '.join(keywords)}"

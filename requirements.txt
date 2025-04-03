@@ -4,6 +4,5 @@ langchain-google-genai
 langchain-text-splitters
 langchain-community
 python-dotenv
-chromadb==0.4.15  # Most stable version
+chromadb==0.3.29  # Most stable version for deployment
 numpy>=1.23.5,<2.0.0
-
