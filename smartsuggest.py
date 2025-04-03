@@ -463,15 +463,14 @@ if uploaded_file is not None:
                     )
                     reset_state_after("keywords")
                     st.rerun()
-            
-            # Display and manage keywords
+       
             if st.session_state.keywords:
                 st.subheader("Keywords")
-                cols = st.columns(3)  # Changed from 4 to 3 for better mobile display
+                cols = st.columns(4) 
                 keywords_to_remove = []
                 
                 for i, kw in enumerate(st.session_state.keywords):
-                    with cols[i % 3]:  # Changed from 4 to 3
+                    with cols[i % 4]: 
                         if st.button(f"ˣ {kw}", key=f"del_{kw}"):
                             keywords_to_remove.append(kw) 
                 
@@ -590,7 +589,7 @@ if uploaded_file is not None:
                     }
                     
                     # Use a more mobile-friendly layout
-                    col1, col2 = st.columns(2)
+                    col1 = st.columns(4)
                     
                     with col1:
                         if st.button("Blog Post", key="blog_post_btn", use_container_width=True):
@@ -599,8 +598,6 @@ if uploaded_file is not None:
                         if st.button("Twitter", key="twitter_post_btn", use_container_width=True):
                             st.session_state.post_type = "twitter"
                             st.rerun()
-                    
-                    with col2:
                         if st.button("LinkedIn Post", key="linkedin_post_btn", use_container_width=True):
                             st.session_state.post_type = "linkedin"
                             st.rerun()
