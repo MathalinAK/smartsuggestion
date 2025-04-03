@@ -20,9 +20,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from dotenv import load_dotenv
 import chromadb
-import time
-import threading
-import concurrent.futures
+import time  # Added for retry logic
 
 load_dotenv()
 google_api_key = os.getenv("GOOGLE_API_KEY")
@@ -44,40 +42,28 @@ default_states = {
     "generated_post": "",
     "post_type": None,
     "selected_tone": None,
-    "custom_tone": "",
-    "progress": 0,
-    "generation_status": ""
+    "custom_tone": ""
 }
 
 for key, default_value in default_states.items():
     if key not in st.session_state:
         st.session_state[key] = default_value
-
 st.set_page_config(page_title="AI Post Generator", layout="centered")
 st.title("Post Generator")
 
-def pdf_to_limited_chunks(pdf_file, chunk_size=500, chunk_overlap=50):  # Further reduced chunk size
-    """Extract text from PDF and return only first few chunks"""
+def pdf_to_limited_chunks(pdf_file, chunk_size=700, chunk_overlap=100):  # Reduced chunk size
+    """Extract text from PDF and return only first 5 chunks"""
     try:
         reader = PdfReader(pdf_file)
         text = "\n".join([page.extract_text() for page in reader.pages])
         
-        # Extract first 2000 characters for title generation
-        title_text = text[:2000]
-        
-        # Process full text for content generation
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap
         )
         all_chunks = splitter.split_text(text)
-        
-        # Store all chunks in session state
-        st.session_state.all_chunks = all_chunks
-        
-        # Return smaller chunk list for title generation
-        title_chunks = splitter.split_text(title_text)
-        return title_chunks
+        st.session_state.all_chunks = all_chunks  
+        return all_chunks[:5]  # Reduced number of chunks for initial processing
     except Exception as e:
         st.error(f"Error processing PDF: {str(e)}")
         return []
@@ -96,12 +82,12 @@ def generate_title(chunks):
         return ""
         
     llm = get_llm(temperature=0.7)
-    # Only use the first chunk to avoid timeouts
-    content = chunks[0] if chunks else ""
+    # Only use the first two chunks to avoid timeouts
+    combined = "\n\n".join(chunks[:2])
     
     prompt = f"""
-    Based on this document excerpt, create ONE engaging title:
-    {content}
+    Based on these document chunks, create **ONE** engaging title:
+    {combined}
     
     The title should:
     - Be 5-10 words exactly
@@ -120,7 +106,7 @@ def generate_keywords(title, audience):
     llm = get_llm(temperature=0.5)
     
     prompt = f"""
-    Generate 10 relevant keywords for this title targeting {audience}:
+    Generate 15 relevant keywords for this title targeting {audience}:
     Title: {title}
     
     The keywords should:
@@ -134,7 +120,7 @@ def generate_keywords(title, audience):
     
     response = llm.invoke(prompt).content
     keywords = [kw.strip() for kw in response.split(",") if kw.strip()]
-    return keywords[:10]  # Reduced from 15 to 10
+    return keywords[:15]
 
 def analyze_keywords(keywords, audience):
     """Analyze how well keywords match the target audience"""
@@ -152,102 +138,105 @@ def analyze_keywords(keywords, audience):
     
     return llm.invoke(prompt).content
 
-def generate_article_direct(title, keywords, chunks):
-    """Generate article directly without vector search - much faster approach"""
-    try:
-        # Use a smaller subset of chunks for processing
-        if len(chunks) > 8:
-            # Get first 3 chunks, middle 2 chunks, and last 3 chunks for better coverage
-            middle_idx = len(chunks) // 2
-            selected_chunks = chunks[:3] + chunks[middle_idx-1:middle_idx+1] + chunks[-3:]
-        else:
-            selected_chunks = chunks[:8]  # Use all if less than 8 chunks
+def generate_article(title, keywords, chunks):
+    """Generate article based on title and keywords with error handling and retries"""
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            # Use fewer chunks to reduce embedding time
+            selected_chunks = chunks[:10] if len(chunks) > 10 else chunks
             
-        # Join selected chunks
-        document_summary = "\n\n".join(selected_chunks)
-        
-        # Limit document length to avoid timeouts
-        max_length = 4000
-        if len(document_summary) > max_length:
-            document_summary = document_summary[:max_length]
-        
-        # Update progress
-        st.session_state.progress = 50
-        st.session_state.generation_status = "Generating article content..."
-        
-        # Generate article without vector search
-        llm = get_llm(temperature=0.5, model="gemini-1.5-pro")  # Use pro model for better quality
-        
-        prompt = f"""
-        Write one comprehensive, engaging article about: {title}
-        
-        CONTENT REQUIREMENTS:
-        1. POWERFUL INTRODUCTION
-        - Start with a surprising statistic, bold claim, or thought-provoking question
-        - Example: "In a groundbreaking development, [shocking fact] about [topic]..."
-        
-        2. WELL-STRUCTURED BODY
-        - Clear subheadings every 2-3 paragraphs
-        - Mix of these elements:
-          * Big Picture: Industry-wide implications and future outlook
-          * Practical Impacts: How this affects businesses/individuals
-          * Technical Insights: Simplified explanations of complex aspects
-        - Short paragraphs (max 3 sentences)
-        - Smooth transitions between sections
-        
-        3. CONTENT QUALITY
-        - Use analogies to explain complex ideas
-        - Include 2-3 key statistics/facts
-        - Provide real-world examples or case studies
-        - Naturally integrate keywords: {', '.join(keywords[:7])}
-        
-        4. PROFESSIONAL YET ENGAGING TONE
-        - Journalistic quality but accessible
-        - Avoid excessive jargon
-        - Maintain objective perspective
-        
-        5. STRONG CONCLUSION
-        - Summary of key points
-        - Future implications
-        - Call-to-action or discussion prompt
-        
-        WORD COUNT: 500-600 words
-        
-        CONTENT TO REFERENCE:
-        {document_summary}
-        """
-        
-        # Set final progress
-        st.session_state.progress = 90
-        st.session_state.generation_status = "Finalizing article..."
-        
-        return llm.invoke(prompt).content
-        
-    except Exception as e:
-        st.error(f"Error generating article: {str(e)}")
-        return "Failed to generate article. Please try with a smaller document or fewer keywords."
-
-def background_article_generation():
-    """Run article generation in background thread"""
-    try:
-        st.session_state.progress = 10
-        st.session_state.generation_status = "Starting article generation..."
-        
-        article = generate_article_direct(
-            st.session_state.title,
-            st.session_state.keywords,
-            st.session_state.all_chunks
-        )
-        
-        if article:
-            st.session_state.generated_article = article
-            st.session_state.current_article = article
-            st.session_state.refined_article = ""
-            st.session_state.progress = 100
-            st.session_state.generation_status = "Article generation complete!"
-    except Exception as e:
-        st.session_state.generation_status = f"Error: {str(e)}"
-        st.session_state.progress = 0
+            # Use a smaller batch size for embeddings
+            embeddings = GoogleGenerativeAIEmbeddings(
+                model="models/embedding-001",
+                google_api_key=google_api_key
+            )
+            
+            # Process in smaller batches if needed
+            batch_size = 5
+            processed_chunks = []
+            
+            for i in range(0, len(selected_chunks), batch_size):
+                batch = selected_chunks[i:i+batch_size]
+                try:
+                    vector_store_batch = Chroma.from_texts(
+                        texts=batch,
+                        embedding=embeddings,
+                        collection_name=f"temp_collection_{i}"
+                    )
+                    
+                    # Get relevant docs from this batch
+                    query = f"{title}. Keywords: {', '.join(keywords[:5])}"  # Use fewer keywords
+                    relevant_docs_batch = vector_store_batch.similarity_search(query, k=2)
+                    processed_chunks.extend([doc.page_content for doc in relevant_docs_batch])
+                except Exception as e:
+                    
+                    continue
+            
+            # If we have no processed chunks, use the original chunks directly
+            if not processed_chunks and selected_chunks:
+                processed_chunks = selected_chunks[:5]  # Use only a few chunks if embedding failed
+                
+            # Get the relevant content
+            relevant_content = "\n\n".join(processed_chunks[:5])  # Limit to 5 chunks maximum
+            
+            llm = get_llm(temperature=0.5)
+            
+            prompt = f"""
+            Write one comprehensive, engaging article about: {title}
+            ** Easy to Read Make the Article more crisper, more engaging style **
+            **make it simple**
+            
+            CONTENT REQUIREMENTS:
+            1. POWERFUL INTRODUCTION
+            - Start with a surprising statistic, bold claim, or thought-provoking question
+            - Example: "In a groundbreaking development, [shocking fact] about [topic]..."
+            
+            2. WELL-STRUCTURED BODY
+            - Clear subheadings every 2-3 paragraphs
+            - Mix of these elements:
+            * Big Picture: Industry-wide implications and future outlook
+            * Practical Impacts: How this affects businesses/individuals
+            * Technical Insights: Simplified explanations of complex aspects
+            - Short paragraphs (max 3 sentences)
+            - Smooth transitions between sections
+            
+            3. CONTENT QUALITY
+            - Use analogies to explain complex ideas
+            - Include 2-3 key statistics/facts
+            - Provide real-world examples or case studies
+            - Naturally integrate keywords: {', '.join(keywords[:10])}  # Limit keywords
+            
+            4. PROFESSIONAL YET ENGAGING TONE
+            - Journalistic quality but accessible
+            - Avoid excessive jargon
+            - Maintain objective perspective
+            
+            5. STRONG CONCLUSION
+            - Summary of key points
+            - Future implications
+            - Call-to-action or discussion prompt
+            
+            WORD COUNT: 500-600 words
+            
+            CONTENT TO REFERENCE:
+            {relevant_content}
+            """
+            
+            return llm.invoke(prompt).content
+            
+        except Exception as e:
+            retry_count += 1
+            if retry_count >= max_retries:
+                st.error(f"Error generating article after {max_retries} attempts: {str(e)}")
+                return "Failed to generate article due to timeout. Please try with a smaller document or fewer keywords."
+            
+            st.warning(f"Attempt {retry_count} failed. Retrying with simplified approach...")
+            time.sleep(2)  # Add a small delay between retries
+    
+    return None
 
 def generate_social_post(article_content, post_type, tone, custom_tone, keywords, audience):
     """Generate social media post based on article content and post type"""
@@ -257,7 +246,7 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
         llm = get_llm(temperature=temperature)
         
         # Limit article content to reduce processing time
-        max_content_length = 1500  # Reduced from 2000
+        max_content_length = 2000
         article_preview = article_content[:max_content_length] + ("..." if len(article_content) > max_content_length else "")
         
         # Limit keywords for efficiency
@@ -415,13 +404,13 @@ def reset_state_after(state_to_keep):
     """Reset state variables after certain operations"""
     states_to_reset = {
         "title": ["analysis_result", "generated_article", "refined_article", 
-                 "current_article", "generated_post", "progress", "generation_status"],
+                 "current_article", "generated_post"],
         "keywords": ["analysis_result", "generated_article", "refined_article", 
-                    "current_article", "generated_post", "progress", "generation_status"],
+                    "current_article", "generated_post"],
     }
     
     for state_to_reset in states_to_reset.get(state_to_keep, []):
-        st.session_state[state_to_reset] = "" if isinstance(st.session_state[state_to_reset], str) else 0
+        st.session_state[state_to_reset] = ""
     
     if state_to_keep == "keywords":
         st.session_state.post_type = None
@@ -463,10 +452,11 @@ if uploaded_file is not None:
                     )
                     reset_state_after("keywords")
                     st.rerun()
-       
+            
+            # Display and manage keywords
             if st.session_state.keywords:
                 st.subheader("Keywords")
-                cols = st.columns(4) 
+                cols = st.columns(4)
                 keywords_to_remove = []
                 
                 for i, kw in enumerate(st.session_state.keywords):
@@ -479,23 +469,20 @@ if uploaded_file is not None:
                                                if kw not in keywords_to_remove]
                     reset_state_after("keywords")
                     st.rerun()
+                custom_key = f"custom_keyword_{len(st.session_state.keywords)}"
+                custom_keyword = st.text_input(
+                    "Add custom keyword", 
+                    key=custom_key, 
+                    placeholder="Enter a keyword"
+                )
                 
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    custom_key = f"custom_keyword_{len(st.session_state.keywords)}"
-                    custom_keyword = st.text_input(
-                        "Add custom keyword", 
-                        key=custom_key, 
-                        placeholder="Enter a keyword"
-                    )
-                with col2:
-                    if st.button("Add Keyword", use_container_width=True):
-                        if custom_keyword.strip() and custom_keyword.strip() not in st.session_state.keywords:
-                            st.session_state.keywords.append(custom_keyword.strip())
-                            reset_state_after("keywords")
-                            st.rerun()
-                        elif custom_keyword.strip() in st.session_state.keywords:
-                            st.warning("Keyword already exists in the list")
+                if st.button("Add Keyword"):
+                    if custom_keyword.strip() and custom_keyword.strip() not in st.session_state.keywords:
+                        st.session_state.keywords.append(custom_keyword.strip())
+                        reset_state_after("keywords")
+                        st.rerun()
+                    elif custom_keyword.strip() in st.session_state.keywords:
+                        st.warning("Keyword already exists in the list")
                 
                 st.divider()
                 
@@ -513,39 +500,33 @@ if uploaded_file is not None:
                     st.markdown(st.session_state.analysis_result)
                     st.divider()
                 
-                # Generate article - with background processing
+                # Generate article
                 if st.button("Generate Article"):
-                    st.session_state.progress = 5
-                    st.session_state.generation_status = "Preparing article generation..."
-                    
-                    # Start background thread
-                    thread = threading.Thread(target=background_article_generation)
-                    thread.start()
-                    st.rerun()
-                
-                # Show progress during article generation
-                if 0 < st.session_state.progress < 100:
-                    st.progress(st.session_state.progress / 100.0)
-                    st.info(st.session_state.generation_status)
-                    time.sleep(0.5)
-                    st.rerun()
+                    with st.spinner("Creating article from document..."):
+                        article = generate_article(
+                            st.session_state.title,
+                            st.session_state.keywords,
+                            st.session_state.all_chunks
+                        )
+                        if article:
+                            st.session_state.generated_article = article
+                            st.session_state.current_article = article
+                            st.session_state.refined_article = ""
+                            st.rerun()
 
                 if st.session_state.generated_article:
                     st.subheader("Generated Article")
                     st.markdown(st.session_state.current_article)
                     st.divider()
                     st.subheader("Refine Article")
-                    
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
+                    with st.form("refinement_form"):
                         user_input = st.text_input(
                             "Enter refinement instructions",
                             value=st.session_state.refinement_text,
                             placeholder="What would you like to change in the article?",
                             key=f"refinement_input_{hash(st.session_state.current_article)}"
                         )
-                    with col2:
-                        submitted = st.button("Refine Article", use_container_width=True)
+                        submitted = st.form_submit_button("Refine Article")
                     
                     if submitted and user_input.strip():
                         with st.spinner("Refining article..."):
@@ -569,17 +550,18 @@ if uploaded_file is not None:
                         st.divider()
                         col1, col2 = st.columns(2)
                         with col1:
-                            if st.button("Use Original Article", use_container_width=True):
+                            if st.button("Use Original Article"):
                                 st.session_state.current_article = st.session_state.generated_article
                                 st.rerun()
                         with col2:
-                            if st.button("Use Refined Article", use_container_width=True):
+                            if st.button("Use Refined Article"):
                                 st.session_state.current_article = st.session_state.refined_article
                                 st.rerun()
-                
-                    # Post type section
+                #post type
                     st.divider()
                     st.subheader("Convert to Social Post")
+                    st.subheader("Select Post Type")
+                    col1, col2, col3, col4 = st.columns(4)
                     
                     post_types = {
                         "blog": "Blog Post",
@@ -588,23 +570,12 @@ if uploaded_file is not None:
                         "email": "Email Post"
                     }
                     
-                    # Use a more mobile-friendly layout
-                    col1 = st.columns(4)
-                    
-                    with col1:
-                        if st.button("Blog Post", key="blog_post_btn", use_container_width=True):
-                            st.session_state.post_type = "blog"
-                            st.rerun()
-                        if st.button("Twitter", key="twitter_post_btn", use_container_width=True):
-                            st.session_state.post_type = "twitter"
-                            st.rerun()
-                        if st.button("LinkedIn Post", key="linkedin_post_btn", use_container_width=True):
-                            st.session_state.post_type = "linkedin"
-                            st.rerun()
-                        if st.button("Email Post", key="email_post_btn", use_container_width=True):
-                            st.session_state.post_type = "email"
-                            st.rerun()
-                    
+                    cols = [col1, col2, col3, col4]
+                    for i, (key, label) in enumerate(post_types.items()):
+                        with cols[i]:
+                            if st.button(f" {label}", key=f"{key}_post_btn", use_container_width=True):
+                                st.session_state.post_type = key
+                                st.rerun()
                     if st.session_state.post_type:
                         st.subheader("Select Tone")
                         tone = st.radio(
@@ -623,7 +594,7 @@ if uploaded_file is not None:
                                 key="custom_tone_input"
                             )
                         
-                        if st.button(f"Generate {st.session_state.post_type.replace('_', ' ').title()} Post", use_container_width=True):
+                        if st.button(f"Generate {st.session_state.post_type.replace('_', ' ').title()} Post"):
                             with st.spinner(f"Crafting your {st.session_state.post_type} post..."):
                                 post_content = generate_social_post(
                                     st.session_state.current_article,
@@ -637,11 +608,6 @@ if uploaded_file is not None:
                                 if post_content:
                                     st.session_state.generated_post = post_content
                                     st.rerun()
-                                    
                         if st.session_state.generated_post:
                             st.subheader(f"Your {st.session_state.post_type.title()} Post")
                             st.markdown(st.session_state.generated_post)
-                            
-                            # Add copy button
-                            if st.button("Copy to Clipboard", key="copy_post", use_container_width=True):
-                                st.write("Post copied to clipboard! Ready to share.")
