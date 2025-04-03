@@ -524,7 +524,7 @@ if uploaded_file is not None:
                         st.subheader("Select Tone")
                         tone = st.radio(
                             "Choose writing style:",
-                            ["Casual 😊", "Formal 🎩", "Humorous 🤣", "Custom ✏️"],
+                            ["Casual ", "Formal ", "Humorous ", "Custom "],
                             horizontal=True,
                             key="tone_selection",
                             label_visibility="collapsed"
@@ -532,7 +532,7 @@ if uploaded_file is not None:
                         
                         st.session_state.selected_tone = tone
 
-                        if tone == "Custom ✏️":
+                        if tone == "Custom ":
                             st.session_state.custom_tone = st.text_input(
                                 "Describe the tone you want (e.g., 'Motivational', 'Technical', 'Friendly expert')", 
                                 key="custom_tone_input"
@@ -544,7 +544,7 @@ if uploaded_file is not None:
                                     st.session_state.current_article,
                                     st.session_state.post_type,
                                     st.session_state.selected_tone,
-                                    st.session_state.custom_tone if tone == "Custom ✏️" else "",
+                                    st.session_state.custom_tone if tone == "Custom " else "",
                                     st.session_state.keywords,
                                     st.session_state.selected_audience
                                 )
