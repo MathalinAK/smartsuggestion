@@ -4,6 +4,6 @@ langchain-google-genai
 langchain-text-splitters
 langchain-community
 python-dotenv
-pysqlite3-binary
-chromadb==0.4.24
+chromadb==0.4.15 
+numpy>=1.23.5,<2.0.0
 

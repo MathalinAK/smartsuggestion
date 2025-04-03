@@ -5,9 +5,6 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGener
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from dotenv import load_dotenv
-import sys
-import sqlite3
-sys.modules["pysqlite3"] = sqlite3  
 import chromadb  
 load_dotenv()
 google_api_key = os.getenv("GOOGLE_API_KEY")
@@ -134,13 +131,8 @@ def generate_article(title, keywords, chunks):
         vector_store = Chroma.from_texts(
         texts=chunks,
         embedding=embeddings,
-        collection_name="temp_collection",
-        persist_directory=None,  # Disable persistence to prevent database locking
-        client_settings=chromadb.config.Settings(
-            anonymized_telemetry=False,
-            is_persistent=False
-        )
-    )
+        collection_name="temp_collection"
+        ) 
 
             
         query = f"{title}. Keywords: {', '.join(keywords)}"
