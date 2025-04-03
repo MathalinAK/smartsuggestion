@@ -19,7 +19,9 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGener
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from dotenv import load_dotenv
-import chromadb  
+import chromadb
+import time  # Added for retry logic
+
 load_dotenv()
 google_api_key = os.getenv("GOOGLE_API_KEY")
 if not google_api_key:
@@ -49,7 +51,7 @@ for key, default_value in default_states.items():
 st.set_page_config(page_title="AI Post Generator", layout="centered")
 st.title("Post Generator")
 
-def pdf_to_limited_chunks(pdf_file, chunk_size=1000, chunk_overlap=200):
+def pdf_to_limited_chunks(pdf_file, chunk_size=700, chunk_overlap=100):  # Reduced chunk size
     """Extract text from PDF and return only first 5 chunks"""
     try:
         reader = PdfReader(pdf_file)
@@ -61,7 +63,7 @@ def pdf_to_limited_chunks(pdf_file, chunk_size=1000, chunk_overlap=200):
         )
         all_chunks = splitter.split_text(text)
         st.session_state.all_chunks = all_chunks  
-        return all_chunks[:10]
+        return all_chunks[:5]  # Reduced number of chunks for initial processing
     except Exception as e:
         st.error(f"Error processing PDF: {str(e)}")
         return []
@@ -80,7 +82,8 @@ def generate_title(chunks):
         return ""
         
     llm = get_llm(temperature=0.7)
-    combined = "\n\n".join(chunks)
+    # Only use the first two chunks to avoid timeouts
+    combined = "\n\n".join(chunks[:2])
     
     prompt = f"""
     Based on these document chunks, create **ONE** engaging title:
@@ -136,71 +139,104 @@ def analyze_keywords(keywords, audience):
     return llm.invoke(prompt).content
 
 def generate_article(title, keywords, chunks):
-    """Generate article based on title and keywords"""
-    try:
-        embeddings = GoogleGenerativeAIEmbeddings(
-            model="models/embedding-001",
-            google_api_key=google_api_key
-        )
-        vector_store = Chroma.from_texts(
-        texts=chunks,
-        embedding=embeddings,
-        collection_name="temp_collection"
-        )
-
+    """Generate article based on title and keywords with error handling and retries"""
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            # Use fewer chunks to reduce embedding time
+            selected_chunks = chunks[:10] if len(chunks) > 10 else chunks
             
-        query = f"{title}. Keywords: {', '.join(keywords)}"
-        relevant_docs = vector_store.similarity_search(query, k=5)
-        relevant_content = "\n\n".join([doc.page_content for doc in relevant_docs])
-        
-        llm = get_llm(temperature=0.5)
-        
-        prompt = f"""
-        Write one comprehensive, engaging article about: {title}
-        ** Easy to Read Make the Article more crisper, more engaging style **
-        **make it simple**
-        
-        CONTENT REQUIREMENTS:
-        1. POWERFUL INTRODUCTION
-        - Start with a surprising statistic, bold claim, or thought-provoking question
-        - Example: "In a groundbreaking development, [shocking fact] about [topic]..."
-        
-        2. WELL-STRUCTURED BODY
-        - Clear subheadings every 2-3 paragraphs
-        - Mix of these elements:
-        * Big Picture: Industry-wide implications and future outlook
-        * Practical Impacts: How this affects businesses/individuals
-        * Technical Insights: Simplified explanations of complex aspects
-        - Short paragraphs (max 3 sentences)
-        - Smooth transitions between sections
-        
-        3. CONTENT QUALITY
-        - Use analogies to explain complex ideas
-        - Include 2-3 key statistics/facts
-        - Provide real-world examples or case studies
-        - Naturally integrate keywords: {', '.join(keywords)}
-        
-        4. PROFESSIONAL YET ENGAGING TONE
-        - Journalistic quality but accessible
-        - Avoid excessive jargon
-        - Maintain objective perspective
-        
-        5. STRONG CONCLUSION
-        - Summary of key points
-        - Future implications
-        - Call-to-action or discussion prompt
-        
-        WORD COUNT: 500-600 words
-        
-        CONTENT TO REFERENCE:
-        {relevant_content}
-        """
-        
-        return llm.invoke(prompt).content
-        
-    except Exception as e:
-        st.error(f"Error generating article: {str(e)}")
-        return None
+            # Use a smaller batch size for embeddings
+            embeddings = GoogleGenerativeAIEmbeddings(
+                model="models/embedding-001",
+                google_api_key=google_api_key
+            )
+            
+            # Process in smaller batches if needed
+            batch_size = 5
+            processed_chunks = []
+            
+            for i in range(0, len(selected_chunks), batch_size):
+                batch = selected_chunks[i:i+batch_size]
+                try:
+                    vector_store_batch = Chroma.from_texts(
+                        texts=batch,
+                        embedding=embeddings,
+                        collection_name=f"temp_collection_{i}"
+                    )
+                    
+                    # Get relevant docs from this batch
+                    query = f"{title}. Keywords: {', '.join(keywords[:5])}"  # Use fewer keywords
+                    relevant_docs_batch = vector_store_batch.similarity_search(query, k=2)
+                    processed_chunks.extend([doc.page_content for doc in relevant_docs_batch])
+                except Exception as e:
+                    st.warning(f"Processing batch {i} failed, continuing with available content: {str(e)}")
+                    continue
+            
+            # If we have no processed chunks, use the original chunks directly
+            if not processed_chunks and selected_chunks:
+                processed_chunks = selected_chunks[:5]  # Use only a few chunks if embedding failed
+                
+            # Get the relevant content
+            relevant_content = "\n\n".join(processed_chunks[:5])  # Limit to 5 chunks maximum
+            
+            llm = get_llm(temperature=0.5)
+            
+            prompt = f"""
+            Write one comprehensive, engaging article about: {title}
+            ** Easy to Read Make the Article more crisper, more engaging style **
+            **make it simple**
+            
+            CONTENT REQUIREMENTS:
+            1. POWERFUL INTRODUCTION
+            - Start with a surprising statistic, bold claim, or thought-provoking question
+            - Example: "In a groundbreaking development, [shocking fact] about [topic]..."
+            
+            2. WELL-STRUCTURED BODY
+            - Clear subheadings every 2-3 paragraphs
+            - Mix of these elements:
+            * Big Picture: Industry-wide implications and future outlook
+            * Practical Impacts: How this affects businesses/individuals
+            * Technical Insights: Simplified explanations of complex aspects
+            - Short paragraphs (max 3 sentences)
+            - Smooth transitions between sections
+            
+            3. CONTENT QUALITY
+            - Use analogies to explain complex ideas
+            - Include 2-3 key statistics/facts
+            - Provide real-world examples or case studies
+            - Naturally integrate keywords: {', '.join(keywords[:10])}  # Limit keywords
+            
+            4. PROFESSIONAL YET ENGAGING TONE
+            - Journalistic quality but accessible
+            - Avoid excessive jargon
+            - Maintain objective perspective
+            
+            5. STRONG CONCLUSION
+            - Summary of key points
+            - Future implications
+            - Call-to-action or discussion prompt
+            
+            WORD COUNT: 500-600 words
+            
+            CONTENT TO REFERENCE:
+            {relevant_content}
+            """
+            
+            return llm.invoke(prompt).content
+            
+        except Exception as e:
+            retry_count += 1
+            if retry_count >= max_retries:
+                st.error(f"Error generating article after {max_retries} attempts: {str(e)}")
+                return "Failed to generate article due to timeout. Please try with a smaller document or fewer keywords."
+            
+            st.warning(f"Attempt {retry_count} failed. Retrying with simplified approach...")
+            time.sleep(2)  # Add a small delay between retries
+    
+    return None
 
 def generate_social_post(article_content, post_type, tone, custom_tone, keywords, audience):
     """Generate social media post based on article content and post type"""
@@ -209,10 +245,17 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
         temperature = 0.7 if selected_tone == "humorous" else 0.5
         llm = get_llm(temperature=temperature)
         
+        # Limit article content to reduce processing time
+        max_content_length = 2000
+        article_preview = article_content[:max_content_length] + ("..." if len(article_content) > max_content_length else "")
+        
+        # Limit keywords for efficiency
+        limited_keywords = keywords[:5] if len(keywords) > 5 else keywords
+        
         post_prompts = {
             "blog": f"""
                 Write a **300-400 word blog post** based on this content for {audience}:
-                {article_content}
+                {article_preview}
                 
                 ### Key Guidelines:
                 - **Tone:** {selected_tone.upper()} ({custom_tone if tone == "Custom ✏️" else tone})
@@ -221,7 +264,7 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
                 - **Fresh Insights** – Focus on unique perspectives and real-world impact
                 - **Conversational Style** – Keep it {selected_tone} and jargon-free
                 - **Credibility** – Back insights with data or examples
-                - **SEO Optimization** – Use keywords: {', '.join(keywords)}
+                - **SEO Optimization** – Use keywords: {', '.join(limited_keywords)}
                 - **Call to Action** – End with a discussion prompt
                 
                 ### Tone-Specific Enhancements:
@@ -235,7 +278,7 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
                 
             "linkedin": f"""
                 Write a compelling **300-word LinkedIn post** based on this content that grabs attention and makes people *stop scrolling*. 💥 Ensure it's **engaging**, **thought-provoking**, and **encourages interaction**.
-                {article_content}
+                {article_preview}
                 
                 **Requirements:**
                 - Tone: {selected_tone.upper()} ({custom_tone if tone == "Custom ✏️" else tone})
@@ -256,14 +299,14 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
                 {"- Casual, friendly, with emojis" if selected_tone == "casual" else ""}
                 {"- Professional but engaging" if selected_tone == "formal" else ""}
                 {"- Witty and humorous" if selected_tone == "humorous" else ""}
-                {"- Custom: " + custom_tone if tone == "Custom ✏️" else ""}
+                {"- Custom: " + custom_tone if tone == "Custom " else ""}
                 
                 Return ONLY the LinkedIn post content.
                 """,
                 
             "twitter": f"""
                 Write an engaging tweet thread based on this content:
-                {article_content}
+                {article_preview}
                 
                 **Requirements:**
                 - Tone: {selected_tone.upper()} ({custom_tone if tone == "Custom ✏️" else tone})
@@ -279,12 +322,12 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
                 {"- Casual, conversational" if selected_tone == "casual" else ""}
                 {"- Professional but concise" if selected_tone == "formal" else ""}
                 {"- Humorous and playful" if selected_tone == "humorous" else ""}
-                {"- Custom: " + custom_tone if tone == "Custom ✏️" else ""}
+                {"- Custom: " + custom_tone if tone == "Custom " else ""}
                 """,
                 
             "email": f"""
                 Write a professional email based on this content:
-                {article_content}
+                {article_preview}
                 
                 **Requirements:**
                 - Tone: {selected_tone.upper()} ({custom_tone if tone == "Custom ✏️" else tone})
@@ -303,7 +346,7 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
                 {"- Friendly and approachable" if selected_tone == "casual" else ""}
                 {"- Formal and professional" if selected_tone == "formal" else ""}
                 {"- Lighthearted with humor" if selected_tone == "humorous" else ""}
-                {"- Custom: " + custom_tone if tone == "Custom ✏️" else ""}
+                {"- Custom: " + custom_tone if tone == "Custom " else ""}
                 
                 Format:
                 Subject: [subject line]
@@ -326,6 +369,9 @@ def refine_article(current_article, refinement_instruction, keywords):
     try:
         llm = get_llm(temperature=0.4)
         
+        # Limit keywords for efficiency
+        limited_keywords = keywords[:5] if len(keywords) > 5 else keywords
+        
         refine_prompt = f"""
         Please refine the following article based on these specific instructions:
         
@@ -339,7 +385,7 @@ def refine_article(current_article, refinement_instruction, keywords):
         1. Make only the requested changes - don't modify other parts
         2. Keep the same overall structure and tone
         3. Maintain all key facts and information
-        4. Preserve the keyword integration: {', '.join(keywords)}
+        4. Preserve the keyword integration: {', '.join(limited_keywords)}
         5. Highlight changes by bolding new or modified text
         
         OUTPUT REQUIREMENTS:
@@ -368,10 +414,11 @@ def reset_state_after(state_to_keep):
     
     if state_to_keep == "keywords":
         st.session_state.post_type = None
+
+# Main App UI
 uploaded_file = st.file_uploader("Upload the document", type=["pdf"])
 
 if uploaded_file is not None:
- 
     if st.button("Generate Title"):
         with st.spinner("Analyzing document..."):
             try:
@@ -384,7 +431,6 @@ if uploaded_file is not None:
             except Exception as e:
                 st.error(f"Error generating title: {str(e)}")
     
-  
     if st.session_state.title:
         st.markdown(f"## {st.session_state.title}")
         
@@ -457,6 +503,7 @@ if uploaded_file is not None:
                 # Generate article
                 if st.button("Generate Article"):
                     with st.spinner("Creating article from document..."):
+                        st.info("This may take a moment. Processing document in smaller chunks to avoid timeouts...")
                         article = generate_article(
                             st.session_state.title,
                             st.session_state.keywords,
