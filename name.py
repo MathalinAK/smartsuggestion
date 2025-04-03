@@ -1,2 +1,4 @@
-import google.generativeai
-print(google.generativeai.__version__)
+from google.cloud import storage
+
+client = storage.Client()
+
