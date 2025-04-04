@@ -38,7 +38,8 @@ default_states = {
     "generated_post": "",
     "post_type": None,
     "selected_tone": None,
-    "custom_tone": ""
+    "custom_tone": "",
+    "humanized_content": "" 
 }
 
 for key, default_value in default_states.items():
@@ -122,103 +123,80 @@ def analyze_keywords(keywords, audience):
     llm = get_llm(temperature=0.3)
     
     prompt = f"""
-    Analyze how well these keywords match the target audience of {audience}:
-    Keywords: {", ".join(keywords)}
-    
-    For each keyword, provide:
-    if the keyword matches the target audience,and say who the keyword is relevant to the target audience
-    
-    Format your response as a bulleted list with clear separation between keywords.
-    """
+            Evaluate how each keyword relates to the target audience: **{audience}**.  
+            Keywords: {", ".join(keywords)}  
+
+            For each keyword, provide:   
+            - How it relates to their interests, needs, or behaviors.  
+            - How it aligns with their goals, challenges, or preferences.  
+
+            Format your response as a **bulleted list**, ensuring each keyword is clearly separated and explained in **one concise line**.
+        """
     
     return llm.invoke(prompt).content
 
-def generate_article(title, keywords, chunks):
-    """Generate article based on title and keywords with error handling and metries"""
-    max_retries = 3
-    retry_count = 0
-    
-    while retry_count < max_retries:
-        try:
-            selected_chunks = chunks[:10] if len(chunks) > 10 else chunks
-            embeddings = GoogleGenerativeAIEmbeddings(
-                model="models/embedding-001",
-                google_api_key=google_api_key
+def generate_article(title, keywords, chunks, audience="general"):
+    """Generate article based on title and keywords"""
+    try:
+       
+        embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/embedding-001",
+            google_api_key=os.getenv("GOOGLE_API_KEY")
+        )
+        
+        vector_store = Chroma.from_texts(
+            texts=chunks,
+            embedding=embeddings,
+            collection_name="temp_collection",
+            persist_directory=None,  
+            client_settings=chromadb.config.Settings(
+                anonymized_telemetry=False,
+                is_persistent=False
             )
-            
-            batch_size = 5
-            processed_chunks = []
-            
-            for i in range(0, len(selected_chunks), batch_size):
-                batch = selected_chunks[i:i+batch_size]
-                try:
-                    vector_store_batch = Chroma.from_texts(
-                        texts=batch,
-                        embedding=embeddings,
-                        collection_name=f"temp_collection_{i}"
-                    )
-                    query = f"{title}. Keywords: {', '.join(keywords[:5])}" 
-                    relevant_docs_batch = vector_store_batch.similarity_search(query, k=2)
-                    processed_chunks.extend([doc.page_content for doc in relevant_docs_batch])
-                except Exception as e:
-                    continue
-            if not processed_chunks and selected_chunks:
-                processed_chunks = selected_chunks[:5]  
-            relevant_content = "\n\n".join(processed_chunks[:5]) 
-            llm = get_llm(temperature=0.5)
-            prompt = f"""
-            Write one comprehensive, engaging article about: {title}
-            ** Easy to Read Make the Article more crisper, more engaging style **
-            **make it simple**
-            
-            CONTENT REQUIREMENTS:
-            1. POWERFUL INTRODUCTION
-            - Start with a surprising statistic, bold claim, or thought-provoking question
-            - Example: "In a groundbreaking development, [shocking fact] about [topic]..."
-            
-            2. WELL-STRUCTURED BODY
-            - Clear subheadings every 2-3 paragraphs
-            - Mix of these elements:
-            * Big Picture: Industry-wide implications and future outlook
-            * Practical Impacts: How this affects businesses/individuals
-            * Technical Insights: Simplified explanations of complex aspects
-            - Short paragraphs (max 3 sentences)
-            - Smooth transitions between sections
-            
-            3. CONTENT QUALITY
-            - Use analogies to explain complex ideas
-            - Include 2-3 key statistics/facts
-            - Provide real-world examples or case studies
-            - Naturally integrate keywords: {', '.join(keywords[:10])}  # Limit keywords
-            
-            4. PROFESSIONAL YET ENGAGING TONE
-            - Journalistic quality but accessible
-            - Avoid excessive jargon
-            - Maintain objective perspective
-            
-            5. STRONG CONCLUSION
-            - Summary of key points
-            - Future implications
-            - Call-to-action or discussion prompt
-            
-            WORD COUNT: 500-600 words
-            
-            CONTENT TO REFERENCE:
-            {relevant_content}
-            """
-            
-            return llm.invoke(prompt).content
-            
-        except Exception as e:
-            retry_count += 1
-            if retry_count >= max_retries:
-                st.error(f"Error generating article after {max_retries} attempts: {str(e)}")
-                return "Failed to generate article due to timeout. Please try with a smaller document or fewer keywords."
-            
-            st.warning(f"Attempt {retry_count} failed. Retrying with simplified approach...")
-            time.sleep(2)  
-    
-    return None
+        )
+        query = f"Audience: {audience}. Keywords: {', '.join(keywords)}"
+        relevant_docs = vector_store.similarity_search(query, k=15)
+        relevant_content = "\n\n".join([doc.page_content for doc in relevant_docs])
+        
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-1.5-flash",
+            google_api_key=os.getenv("GOOGLE_API_KEY"),
+            temperature=0.5
+        )
+        
+        # Original prompt (unchanged)
+        prompt = f"""
+        Write one comprehensive, engaging article about: {title}
+        **the article has to be easy to read and it has to be in a simple way like a human written**
+        **The articles has to be around 700 words**
+        
+        CONTENT REQUIREMENTS:
+        1. POWERFUL INTRODUCTION
+        - Start with a surprising statistic, bold claim, or thought-provoking question
+        
+        2. WELL-STRUCTURED BODY
+        - Clear subheadings every 2-3 paragraphs
+        - Mix of big picture, practical impacts, and simplified technical insights
+        - Short paragraphs (max 3 sentences)
+        
+        3. CONTENT QUALITY
+        - Use analogies to explain complex ideas
+        - Include 2-3 key statistics/facts
+        - Naturally integrate keywords: {', '.join(keywords)}
+        
+        4. STRONG CONCLUSION
+        - Summary of key points
+        - Future implications
+        - Call-to-action or discussion prompt
+        
+        CONTENT TO REFERENCE:
+        {relevant_content}
+        """
+        
+        return llm.invoke(prompt).content
+        
+    except Exception as e:
+        st.error(f"Error generating article: {str(e)}")
 
 def generate_social_post(article_content, post_type, tone, custom_tone, keywords, audience):
     """Generate social media post based on article content and post type"""
@@ -375,6 +353,44 @@ def refine_article(current_article, refinement_instruction, keywords):
     except Exception as e:
         st.error(f"Error refining article: {str(e)}")
         return None
+def humanize_content(content):
+    """Make content sound more like it was written by a human"""
+    try:
+        llm = get_llm(temperature=0.7)
+        
+        humanize_prompt = f"""
+        Rewrite the following content to sound authentically human-written. The content should NOT look like AI-generated text:
+
+        {content}
+        
+        IMPORTANT HUMANIZING GUIDELINES:
+        - Use varied sentence structures (mix simple, compound, and complex)
+        - Add occasional imperfections (thoughtful pauses, conversational asides)
+        - Include personal touches (anecdotes, opinions, unique perspectives)
+        - Vary paragraph lengths (some short, some medium)
+        - Use natural transitions between ideas
+        - Add colloquial expressions where appropriate
+        - Incorporate casual tone markers (contractions, rhetorical questions, emphasis)
+        - Avoid overly perfect structure or mechanical transitions
+        - Include occasional mild idioms or metaphors
+        - Reduce repetitive patterns and formulaic writing
+        - Use a more natural flow of ideas (not perfectly sequential)
+        
+        DO NOT:
+        - Mention that this was rewritten or humanized
+        - Change the core information or main points
+        - Add fictional data or made-up statistics
+        - Compromise factual accuracy
+        - Make it verbose - keep it concise and authentic
+        
+        Return ONLY the humanized content.
+        """
+        
+        return llm.invoke(humanize_prompt).content
+    except Exception as e:
+        st.error(f"Error humanizing content: {str(e)}")
+        return None
+
 
 def reset_state_after(state_to_keep):
     """Reset state variables after certain operations"""
@@ -587,3 +603,10 @@ if uploaded_file is not None:
                         if st.session_state.generated_post:
                             st.subheader(f"Your {st.session_state.post_type.title()} Post")
                             st.markdown(st.session_state.generated_post)
+                            if st.button(" Humanize Post", help="Make the post sound more naturally human-written"):
+                                with st.spinner("Making post sound more human..."):
+                                    humanized_post = humanize_content(st.session_state.generated_post)
+                                    if humanized_post:
+                                        st.session_state.generated_post = humanized_post
+                                        st.success("Post has been humanized!")
+                                        st.rerun()
