@@ -9,6 +9,8 @@ if sqlite3.sqlite_version_info < (3, 35, 0):
         embedding_functions._sqlite3 = sqlite3
         sys.modules['sqlite3'] = sqlite3
 import os
+import tempfile
+import shutil
 import streamlit as st
 from PyPDF2 import PdfReader
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
@@ -138,22 +140,31 @@ def analyze_keywords(keywords, audience):
 def generate_article(title, keywords, chunks, audience="general"):
     """Generate article based on title and keywords"""
     try:
-       
+        # Create temporary in-memory ChromaDB instance
         embeddings = GoogleGenerativeAIEmbeddings(
             model="models/embedding-001",
             google_api_key=os.getenv("GOOGLE_API_KEY")
         )
         
+        # Create temporary directory for Chroma
+        temp_dir = tempfile.mkdtemp()
+        
         vector_store = Chroma.from_texts(
             texts=chunks,
             embedding=embeddings,
             collection_name="temp_collection",
-            persist_directory=None,  # In-memory only
+            persist_directory=temp_dir,  # Use temporary directory
             client_settings=chromadb.config.Settings(
-                anonymized_telemetry=False
+                anonymized_telemetry=False,
+                chroma_db_impl="duckdb+parquet",
+                persist_directory=temp_dir
             )
         )
-        query = f"Audience: {audience}. Keywords: {', '.join(keywords)}"
+        
+        # Modified query to include audience
+        query = f"Audience: {audience}. Title: {title}. Keywords: {', '.join(keywords)}"
+        
+        # Get 15 relevant documents
         relevant_docs = vector_store.similarity_search(query, k=15)
         relevant_content = "\n\n".join([doc.page_content for doc in relevant_docs])
         
@@ -192,10 +203,19 @@ def generate_article(title, keywords, chunks, audience="general"):
         {relevant_content}
         """
         
-        return llm.invoke(prompt).content
+        result = llm.invoke(prompt).content
+        
+        # Clean up temporary directory
+        try:
+            shutil.rmtree(temp_dir)
+        except:
+            pass
+            
+        return result
         
     except Exception as e:
         st.error(f"Error generating article: {str(e)}")
+        return None
 
 def generate_social_post(article_content, post_type, tone, custom_tone, keywords, audience):
     """Generate social media post based on article content and post type"""
