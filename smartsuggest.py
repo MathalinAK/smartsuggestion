@@ -623,10 +623,7 @@ if uploaded_file is not None:
                         if st.session_state.generated_post:
                             st.subheader(f"Your {st.session_state.post_type.title()} Post")
                             st.markdown(st.session_state.generated_post)
-                        if st.session_state.generated_post:
-                            st.subheader(f"Your {st.session_state.post_type.title()} Post")
-                            st.markdown(st.session_state.generated_post)
-                            if st.button(" Humanize Post", help="Make the post sound more naturally human-written"):
+                        if st.button(" Humanize Post", help="Make the post sound more naturally human-written"):
                                 with st.spinner("Making post sound more human..."):
                                     humanized_post = humanize_content(st.session_state.generated_post)
                                     if humanized_post:
