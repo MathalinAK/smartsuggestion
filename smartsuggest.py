@@ -79,7 +79,7 @@ def generate_title(chunks):
         return ""
         
     llm = get_llm(temperature=0.7)
-    combined = "\n\n".join(chunks[:2])
+    combined = "\n\n".join(chunks[3:8])
     
     prompt = f"""
     Based on these document chunks, create **ONE** engaging title:
@@ -127,7 +127,7 @@ def analyze_keywords(keywords, audience):
             Keywords: {", ".join(keywords)}  
 
             For each keyword, provide:   
-            - How it relates to their interests, needs, or behaviors.  
+            - How it relates to the target audience. 
             - How it aligns with their goals, challenges, or preferences.  
 
             Format your response as a **bulleted list**, ensuring each keyword is clearly separated and explained in **one concise line**.
@@ -148,10 +148,9 @@ def generate_article(title, keywords, chunks, audience="general"):
             texts=chunks,
             embedding=embeddings,
             collection_name="temp_collection",
-            persist_directory=None,  
+            persist_directory=None,  # In-memory only
             client_settings=chromadb.config.Settings(
-                anonymized_telemetry=False,
-                is_persistent=False
+                anonymized_telemetry=False
             )
         )
         query = f"Audience: {audience}. Keywords: {', '.join(keywords)}"
@@ -359,31 +358,28 @@ def humanize_content(content):
         llm = get_llm(temperature=0.7)
         
         humanize_prompt = f"""
-        Rewrite the following content to sound authentically human-written. The content should NOT look like AI-generated text:
+       Rewrite the given content so it feels like it was written by a real person—natural, engaging, and conversational. It should have personality, flow smoothly, and sound like something you’d actually hear in a conversation, not AI-generated text.  
 
-        {content}
-        
-        IMPORTANT HUMANIZING GUIDELINES:
-        - Use varied sentence structures (mix simple, compound, and complex)
-        - Add occasional imperfections (thoughtful pauses, conversational asides)
-        - Include personal touches (anecdotes, opinions, unique perspectives)
-        - Vary paragraph lengths (some short, some medium)
-        - Use natural transitions between ideas
-        - Add colloquial expressions where appropriate
-        - Incorporate casual tone markers (contractions, rhetorical questions, emphasis)
-        - Avoid overly perfect structure or mechanical transitions
-        - Include occasional mild idioms or metaphors
-        - Reduce repetitive patterns and formulaic writing
-        - Use a more natural flow of ideas (not perfectly sequential)
-        
-        DO NOT:
-        - Mention that this was rewritten or humanized
-        - Change the core information or main points
-        - Add fictional data or made-up statistics
-        - Compromise factual accuracy
-        - Make it verbose - keep it concise and authentic
-        
-        Return ONLY the humanized content.
+        {content}  
+
+        ### Requirements:  
+        - Keep the core message intact, but make it sound effortless and relatable.  
+        - Use a mix of sentence structures—short, punchy lines alongside longer, more detailed ones.  
+        - Make transitions feel natural, not robotic. If it flows better to mix things up, do it.  
+        - Keep the tone easygoing and conversational—like you’re explaining it to a friend or colleague.  
+        - Add a little personality and perspective—something like: *"We’re already seeing global brands setting up shop to tap into this growth. It’s not just talk—it’s happening."*  
+        - If a rigid list feels too structured, break it up with casual transitions like: *"Oh, and let’s not forget the MSME sector—these small businesses are about to explode with growth."*  
+        - Use natural phrasing, for example, instead of *“India Vision 2028 is creating a dynamic market, constantly evolving,”* go for *“India’s market is changing fast—blink and you’ll miss it.”*  
+        - No fluff, no filler—just clean, engaging writing that feels real.  
+
+        ### Do NOT:  
+        - Mention that this was rewritten or humanized.  
+        - Change any key facts or introduce made-up details.  
+        - Make it sound stiff, repetitive, or overly polished.  
+
+        Return **only** the rewritten content—no explanations, no formatting notes.  
+
+
         """
         
         return llm.invoke(humanize_prompt).content
