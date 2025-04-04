@@ -9,8 +9,6 @@ if sqlite3.sqlite_version_info < (3, 35, 0):
         embedding_functions._sqlite3 = sqlite3
         sys.modules['sqlite3'] = sqlite3
 import os
-import tempfile
-import shutil
 import streamlit as st
 from PyPDF2 import PdfReader
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
@@ -81,7 +79,7 @@ def generate_title(chunks):
         return ""
         
     llm = get_llm(temperature=0.7)
-    combined = "\n\n".join(chunks[3:8])
+    combined = "\n\n".join(chunks[:2])
     
     prompt = f"""
     Based on these document chunks, create **ONE** engaging title:
@@ -125,97 +123,102 @@ def analyze_keywords(keywords, audience):
     llm = get_llm(temperature=0.3)
     
     prompt = f"""
-            Evaluate how each keyword relates to the target audience: **{audience}**.  
-            Keywords: {", ".join(keywords)}  
-
-            For each keyword, provide:   
-            - How it relates to the target audience. 
-            - How it aligns with their goals, challenges, or preferences.  
-
-            Format your response as a **bulleted list**, ensuring each keyword is clearly separated and explained in **one concise line**.
-        """
+    Evaluate how each keyword resonates with the target audience: {audience}.
+            Keywords: {", ".join(keywords)}
+           - For each keyword, provide:
+           - How it connects with the audience’s interests, needs, or aspirations.
+            -How it supports their goals, solves their challenges, or enhances their experience.
+        -format your response as a bulleted list, ensuring each keyword is clearly explained in one concise, positive statement that highlights its relevance.
+    """
     
     return llm.invoke(prompt).content
 
-def generate_article(title, keywords, chunks, audience="general"):
-    """Generate article based on title and keywords"""
-    try:
-        # Create temporary in-memory ChromaDB instance
-        embeddings = GoogleGenerativeAIEmbeddings(
-            model="models/embedding-001",
-            google_api_key=os.getenv("GOOGLE_API_KEY")
-        )
-        
-        # Create temporary directory for Chroma
-        temp_dir = tempfile.mkdtemp()
-        
-        vector_store = Chroma.from_texts(
-            texts=chunks,
-            embedding=embeddings,
-            collection_name="temp_collection",
-            persist_directory=temp_dir,  # Use temporary directory
-            client_settings=chromadb.config.Settings(
-                anonymized_telemetry=False,
-                chroma_db_impl="duckdb+parquet",
-                persist_directory=temp_dir
-            )
-        )
-        
-        # Modified query to include audience
-        query = f"Audience: {audience}. Title: {title}. Keywords: {', '.join(keywords)}"
-        
-        # Get 15 relevant documents
-        relevant_docs = vector_store.similarity_search(query, k=15)
-        relevant_content = "\n\n".join([doc.page_content for doc in relevant_docs])
-        
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
-            google_api_key=os.getenv("GOOGLE_API_KEY"),
-            temperature=0.5
-        )
-        
-        # Original prompt (unchanged)
-        prompt = f"""
-        Write one comprehensive, engaging article about: {title}
-        **the article has to be easy to read and it has to be in a simple way like a human written**
-        **The articles has to be around 700 words**
-        
-        CONTENT REQUIREMENTS:
-        1. POWERFUL INTRODUCTION
-        - Start with a surprising statistic, bold claim, or thought-provoking question
-        
-        2. WELL-STRUCTURED BODY
-        - Clear subheadings every 2-3 paragraphs
-        - Mix of big picture, practical impacts, and simplified technical insights
-        - Short paragraphs (max 3 sentences)
-        
-        3. CONTENT QUALITY
-        - Use analogies to explain complex ideas
-        - Include 2-3 key statistics/facts
-        - Naturally integrate keywords: {', '.join(keywords)}
-        
-        4. STRONG CONCLUSION
-        - Summary of key points
-        - Future implications
-        - Call-to-action or discussion prompt
-        
-        CONTENT TO REFERENCE:
-        {relevant_content}
-        """
-        
-        result = llm.invoke(prompt).content
-        
-        # Clean up temporary directory
+def generate_article(title, keywords, chunks):
+    """Generate article based on title and keywords with error handling and metries"""
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
         try:
-            shutil.rmtree(temp_dir)
-        except:
-            pass
+            selected_chunks = chunks[:10] if len(chunks) > 10 else chunks
+            embeddings = GoogleGenerativeAIEmbeddings(
+                model="models/embedding-001",
+                google_api_key=google_api_key
+            )
             
-        return result
-        
-    except Exception as e:
-        st.error(f"Error generating article: {str(e)}")
-        return None
+            batch_size = 5
+            processed_chunks = []
+            
+            for i in range(0, len(selected_chunks), batch_size):
+                batch = selected_chunks[i:i+batch_size]
+                try:
+                    vector_store_batch = Chroma.from_texts(
+                        texts=batch,
+                        embedding=embeddings,
+                        collection_name=f"temp_collection_{i}"
+                    )
+                    query = f"{title}. Keywords: {', '.join(keywords[:15])}" 
+                    relevant_docs_batch = vector_store_batch.similarity_search(query, k=15)
+                    processed_chunks.extend([doc.page_content for doc in relevant_docs_batch])
+                except Exception as e:
+                    continue
+            if not processed_chunks and selected_chunks:
+                processed_chunks = selected_chunks[:5]  
+            relevant_content = "\n\n".join(processed_chunks[:5]) 
+            llm = get_llm(temperature=0.5)
+            prompt = f"""
+            Write one comprehensive, engaging article about: {title}
+            ** Easy to Read Make the Article more crisper, more engaging style **
+            **make it simple**
+            
+            CONTENT REQUIREMENTS:
+            1. POWERFUL INTRODUCTION
+            - Start with a surprising statistic, bold claim, or thought-provoking question
+            - Example: "In a groundbreaking development, [shocking fact] about [topic]..."
+            
+            2. WELL-STRUCTURED BODY
+            - Clear subheadings every 2-3 paragraphs
+            - Mix of these elements:
+            * Big Picture: Industry-wide implications and future outlook
+            * Practical Impacts: How this affects businesses/individuals
+            * Technical Insights: Simplified explanations of complex aspects
+            - Short paragraphs (max 3 sentences)
+            - Smooth transitions between sections
+            
+            3. CONTENT QUALITY
+            - Use analogies to explain complex ideas
+            - Include 2-3 key statistics/facts
+            - Provide real-world examples or case studies
+            - Naturally integrate keywords: {', '.join(keywords[:10])}  # Limit keywords
+            
+            4. PROFESSIONAL YET ENGAGING TONE
+            - Journalistic quality but accessible
+            - Avoid excessive jargon
+            - Maintain objective perspective
+            
+            5. STRONG CONCLUSION
+            - Summary of key points
+            - Future implications
+            - Call-to-action or discussion prompt
+            
+            WORD COUNT: 500-600 words
+            
+            CONTENT TO REFERENCE:
+            {relevant_content}
+            """
+            
+            return llm.invoke(prompt).content
+            
+        except Exception as e:
+            retry_count += 1
+            if retry_count >= max_retries:
+                st.error(f"Error generating article after {max_retries} attempts: {str(e)}")
+                return "Failed to generate article due to timeout. Please try with a smaller document or fewer keywords."
+            
+            st.warning(f"Attempt {retry_count} failed. Retrying with simplified approach...")
+            time.sleep(2)  
+    
+    return None
 
 def generate_social_post(article_content, post_type, tone, custom_tone, keywords, audience):
     """Generate social media post based on article content and post type"""
@@ -406,6 +409,7 @@ def humanize_content(content):
     except Exception as e:
         st.error(f"Error humanizing content: {str(e)}")
         return None
+
 
 
 def reset_state_after(state_to_keep):
@@ -616,6 +620,9 @@ if uploaded_file is not None:
                                 if post_content:
                                     st.session_state.generated_post = post_content
                                     st.rerun()
+                        if st.session_state.generated_post:
+                            st.subheader(f"Your {st.session_state.post_type.title()} Post")
+                            st.markdown(st.session_state.generated_post)
                         if st.session_state.generated_post:
                             st.subheader(f"Your {st.session_state.post_type.title()} Post")
                             st.markdown(st.session_state.generated_post)
