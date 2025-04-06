@@ -8,6 +8,8 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGener
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from dotenv import load_dotenv
+
+# Patch for sqlite version if needed
 if sqlite3.sqlite_version_info < (3, 35, 0):
     try:
         __import__('pysqlite3')
@@ -17,13 +19,14 @@ if sqlite3.sqlite_version_info < (3, 35, 0):
         embedding_functions._sqlite3 = sqlite3
         sys.modules['sqlite3'] = sqlite3
 
-
+# Load API key
 load_dotenv()
 google_api_key = os.getenv("GOOGLE_API_KEY")
 if not google_api_key:
     st.error("Please create a .env file with your GOOGLE_API_KEY")
     st.stop()
 
+# Set default session state
 default_states = {
     "keywords": [], "title": "", "show_keyword_section": False, "all_chunks": [],
     "selected_audience": "General Public", "analysis_result": "", "generated_article": "",
@@ -38,6 +41,8 @@ for key, value in default_states.items():
 st.set_page_config(page_title="AI Post Generator", layout="centered")
 st.title("Post Generator")
 
+# ---------------------------- Utilities ----------------------------
+
 @st.cache_data(show_spinner=False)
 def pdf_to_limited_chunks(pdf_file, chunk_size=700, chunk_overlap=100):
     """Extract text from PDF and split into chunks (first 5 returned)"""
@@ -47,7 +52,7 @@ def pdf_to_limited_chunks(pdf_file, chunk_size=700, chunk_overlap=100):
         splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         all_chunks = splitter.split_text(text)
         st.session_state.all_chunks = all_chunks
-        return all_chunks[:10]  
+        return all_chunks[:10]  # Limit initial processing
     except Exception as e:
         st.error(f"Error processing PDF: {str(e)}")
         return []
@@ -65,29 +70,28 @@ def generate_title(chunks):
     combined_text = "\n\n".join(selected_chunks)
 
     prompt = f"""
-You are a professional content strategist.
+    You are a professional content strategist.
 
-Based on the following document excerpts, generate ONE **engaging and clear** article title.
+    Based on the following document excerpts, generate ONE **engaging and clear** article title.
 
-Content:
-{combined_text}
+    Content:
+    {combined_text}
 
-🔹 The title should:
-- Be 6–12 words max
-- Capture the **main problem or opportunity**
-- Use strong, simple language (no fluff or jargon)
-- Feel like a **headline** you'd want to click
-🎯 Examples of good titles:
-- "Why Smart Cities May Fail Without AI (2024)"
-- "How Climate Startups Are Saving the Planet"
-- "The Truth About Data Privacy in 2025"
+    🔹 The title should:
+    - Be 6–12 words max
+    - Capture the **main problem or opportunity**
+    - Use strong, simple language (no fluff or jargon)
+    - Feel like a **headline** you'd want to click
+    Examples of good titles:
+    - "Why Smart Cities May Fail Without AI (2024)"
+    - "How Climate Startups Are Saving the Planet"
+    - "The Truth About Data Privacy in 2025"
 
-Return ONLY the final title text.
-"""
+    Return ONLY the final title text.
+    """
 
     result = llm.invoke(prompt).content.strip()
     return result.split('\n')[0].strip('"').strip()
-
 
 
 def generate_keywords(title, audience):
@@ -116,27 +120,33 @@ def analyze_keywords(keywords, audience):
     Keywords: {", ".join(keywords)}
     """
     return llm.invoke(prompt).content
-def get_llm(temperature=0.5, model="gemini-1.5-flash"):
-    return ChatGoogleGenerativeAI(model=model, google_api_key=os.getenv("GOOGLE_API_KEY"), temperature=temperature)
-async def generate_article_async(title, keywords, chunks):
+
+# ----------------------- ARTICLE GENERATION -----------------------
+
+def generate_article(title, keywords, chunks):
+    """Efficient article generation with minimized Chroma use and summarization"""
     try:
-        selected_chunks = chunks[:10] if len(chunks) > 10 else chunks
         embeddings = GoogleGenerativeAIEmbeddings(
             model="models/embedding-001",
-            google_api_key=os.getenv("GOOGLE_API_KEY")
+            google_api_key=google_api_key
         )
+
+        # Use only selected chunks and create one Chroma store
+        selected_chunks = chunks[:10] if len(chunks) > 10 else chunks
         vector_store = Chroma.from_texts(
             texts=selected_chunks,
             embedding=embeddings,
             collection_name="temp_collection"
         )
+
         query = f"{title}. Keywords: {', '.join(keywords[:10])}"
         relevant_docs = vector_store.similarity_search(query, k=5)
         relevant_content = "\n\n".join([doc.page_content for doc in relevant_docs])
 
+        # Now pass to LLM
         llm = get_llm(temperature=0.5)
-
         prompt = f"""
+   
 Write a clear, engaging article (500–600 words) on: {title}
 
 Make it simple, crisp, and easy to follow for a broad audience.
@@ -161,12 +171,16 @@ Make it simple, crisp, and easy to follow for a broad audience.
 Reference this content:
 {relevant_content}
 """
-        response = await llm.ainvoke(prompt)
-        return response.content.strip()
+
+
+   
+
+        return llm.invoke(prompt).content.strip()
 
     except Exception as e:
-        st.error(f"Async article generation failed: {str(e)}")
-        return "❌ Error: Async article generation failed."
+        st.error(f"Failed to generate article: {str(e)}")
+        return "Error: Unable to generate article."
+
 
 
 def generate_social_post(article_content, post_type, tone, custom_tone, keywords, audience):
@@ -324,12 +338,13 @@ def refine_article(current_article, refinement_instruction, keywords):
     except Exception as e:
         st.error(f"Error refining article: {str(e)}")
         return None
-def humanize_content(content, post_type="default"):
-    """Make content sound natural and human across different formats."""
+def humanize_content(content):
+    """Make content sound more like it was written by a human"""
     try:
         llm = get_llm(temperature=0.7)
-        base_instructions = """
-        Rewrite the content below so it sounds natural, human, and engaging—like something you'd say to a friend. 
+        
+        humanize_prompt = f"""
+       Rewrite the content below so it sounds natural, human, and engaging—like something you'd say to a friend. 
         Keep the original message, but make it flow effortlessly with personality and a conversational tone.
 
         Guidelines:
@@ -345,9 +360,9 @@ def humanize_content(content, post_type="default"):
 
         Return only the rewritten version—no extra notes.
         """
-        if post_type == "twitter":
+        if post_types == "twitter":
             prompt = f"""
-            {base_instructions}
+            { humanize_prompt}
 
             ### Format: Twitter Post
             - Keep it **under 280 characters**
@@ -364,9 +379,9 @@ def humanize_content(content, post_type="default"):
             Return ONLY the final tweet text. No intro, no notes.
             """
 
-        elif post_type == "linkedin":
+        elif post_types == "linkedin":
             prompt = f"""
-            {base_instructions}
+            { humanize_prompt}
 
             ### Format: LinkedIn Post
             - Professional yet friendly
@@ -382,9 +397,9 @@ def humanize_content(content, post_type="default"):
             Return ONLY the rewritten LinkedIn post.
             """
 
-        elif post_type == "email":
+        elif post_types == "email":
             prompt = f"""
-            {base_instructions}
+            { humanize_prompt}
 
             ### Format: Email Body
             - Conversational and helpful tone
@@ -402,7 +417,7 @@ def humanize_content(content, post_type="default"):
 
         else:
             prompt = f"""
-            {base_instructions}
+            { humanize_prompt}
 
             Content:
             {content}
@@ -414,6 +429,11 @@ def humanize_content(content, post_type="default"):
     except Exception as e:
         return f"Error during humanization: {str(e)}"
 
+        return None
+        
+        return llm.invoke(humanize_prompt).content
+    except Exception as e:
+        st.error(f"Error humanizing content: {str(e)}")
         return None
 def reset_state_after(state_to_keep):
     """Reset state variables after certain operations"""
@@ -430,7 +450,7 @@ def reset_state_after(state_to_keep):
     if state_to_keep == "keywords":
         st.session_state.post_type = None
 
-
+# Main App UI
 uploaded_file = st.file_uploader("Upload the document", type=["pdf"])
 
 if uploaded_file is not None:
@@ -508,29 +528,30 @@ if uploaded_file is not None:
                     st.markdown(st.session_state.analysis_result)
 
                 st.divider()
+
+                                # ✅ Generate Article
                 if st.button("Generate Article"):
                     with st.spinner("Generating article..."):
-                        try:
-                            import asyncio
-                            article = asyncio.run(generate_article_async(
-                                st.session_state.title,
-                                st.session_state.keywords,
-                                st.session_state.all_chunks
-                            ))
+                        article = generate_article(
+                            st.session_state.title,
+                            st.session_state.keywords,
+                            st.session_state.all_chunks
+                        )
+                        if article:
+                            st.session_state.generated_article = article
+                            st.session_state.current_article = article
+                            st.session_state.refined_article = ""  # Reset any old refinements
+                            st.success("Article generated!")
 
-                            if article:
-                                st.session_state.generated_article = article
-                                st.session_state.current_article = article
-                                st.session_state.refined_article = ""  
-                                st.success("✅ Article generated!")
-                        except Exception as e:
-                            st.error(f"🚨 Failed to generate article: {str(e)}")
+                # ✅ Display the Current Article (refined or original)
                 if st.session_state.current_article:
                     article_type = "Refined Article" if st.session_state.refined_article and st.session_state.current_article == st.session_state.refined_article else "Generated Article"
                     st.subheader(article_type)
                     st.markdown(st.session_state.current_article)
 
                     st.divider()
+
+                    # ✅ Refinement UI
                     st.subheader("Refine Article")
                     with st.form("refinement_form"):
                         user_input = st.text_input(
@@ -553,11 +574,14 @@ if uploaded_file is not None:
                                     st.session_state.refined_article = refined
                                     st.session_state.current_article = refined
                                     st.session_state.refinement_text = ""
+                                    st.success("Article refined!")
                                     st.rerun()
                         else:
                             st.warning("Please enter refinement instructions.")
                     else:
                         st.session_state.refinement_text = user_input
+
+                    # ✅ Option to switch between original/refined
                     if st.session_state.generated_article and st.session_state.refined_article:
                         st.divider()
                         st.subheader("Choose Version")
