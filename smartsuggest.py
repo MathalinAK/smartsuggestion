@@ -1,5 +1,15 @@
 import sys
 import sqlite3
+import os
+import time
+import streamlit as st
+from PyPDF2 import PdfReader
+from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import Chroma
+from dotenv import load_dotenv
+
+# Patch for sqlite version if needed
 if sqlite3.sqlite_version_info < (3, 35, 0):
     try:
         __import__('pysqlite3')
@@ -8,217 +18,167 @@ if sqlite3.sqlite_version_info < (3, 35, 0):
         from chromadb.utils import embedding_functions
         embedding_functions._sqlite3 = sqlite3
         sys.modules['sqlite3'] = sqlite3
-import os
-import streamlit as st
-from PyPDF2 import PdfReader
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
-from dotenv import load_dotenv
-import chromadb
-import time  # Added for retry logic
 
+# Load API key
 load_dotenv()
 google_api_key = os.getenv("GOOGLE_API_KEY")
 if not google_api_key:
     st.error("Please create a .env file with your GOOGLE_API_KEY")
     st.stop()
 
+# Set default session state
 default_states = {
-    "keywords": [],
-    "title": "",
-    "show_keyword_section": False,
-    "all_chunks": [],
-    "selected_audience": "General Public",
-    "analysis_result": "",
-    "generated_article": "",
-    "refinement_text": "",
-    "refined_article": "",
-    "current_article": "",
-    "generated_post": "",
-    "post_type": None,
-    "selected_tone": None,
-    "custom_tone": "",
-    "humanized_content": "" 
+    "keywords": [], "title": "", "show_keyword_section": False, "all_chunks": [],
+    "selected_audience": "General Public", "analysis_result": "", "generated_article": "",
+    "refinement_text": "", "refined_article": "", "current_article": "",
+    "generated_post": "", "post_type": None, "selected_tone": None,
+    "custom_tone": "", "humanized_content": ""
 }
-
-for key, default_value in default_states.items():
+for key, value in default_states.items():
     if key not in st.session_state:
-        st.session_state[key] = default_value
+        st.session_state[key] = value
+
 st.set_page_config(page_title="AI Post Generator", layout="centered")
 st.title("Post Generator")
 
-def pdf_to_limited_chunks(pdf_file, chunk_size=700, chunk_overlap=100):  # Reduced chunk size
-    """Extract text from PDF and return only first 5 chunks"""
+# ---------------------------- Utilities ----------------------------
+
+@st.cache_data(show_spinner=False)
+def pdf_to_limited_chunks(pdf_file, chunk_size=700, chunk_overlap=100):
+    """Extract text from PDF and split into chunks (first 5 returned)"""
     try:
         reader = PdfReader(pdf_file)
-        text = "\n".join([page.extract_text() for page in reader.pages])
-        
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap
-        )
+        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+        splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         all_chunks = splitter.split_text(text)
-        st.session_state.all_chunks = all_chunks  
-        return all_chunks[:5]  
+        st.session_state.all_chunks = all_chunks
+        return all_chunks[:10]  # Limit initial processing
     except Exception as e:
         st.error(f"Error processing PDF: {str(e)}")
         return []
 
 def get_llm(temperature=0.5, model="gemini-1.5-flash"):
-    """Get LLM instance with specified parameters"""
-    return ChatGoogleGenerativeAI(
-        model=model,
-        google_api_key=google_api_key,
-        temperature=temperature
-    )
+    return ChatGoogleGenerativeAI(model=model, google_api_key=google_api_key, temperature=temperature)
 
 def generate_title(chunks):
-    """Generate title using Gemini from limited chunks"""
+    """Generate a strong, relevant title from multiple document chunks."""
     if not chunks:
         return ""
-        
+
     llm = get_llm(temperature=0.7)
-    combined = "\n\n".join(chunks[:2])
-    
+
+    # Use the first 3 and last 2 chunks for broader context
+    selected_chunks = chunks[:3] + chunks[-2:]
+    combined_text = "\n\n".join(selected_chunks)
+
     prompt = f"""
-    Based on these document chunks, create **ONE** engaging title:
-    {combined}
-    
-    The title should:
-    - Be 5-10 words exactly
-    - Capture core themes
-    - Avoid complex jargon
-    - Include year if mentioned
-    
-    Return ONLY the title text, nothing else.
+    You are given excerpts from a document. Based on these, write one compelling and concise title that captures the overall theme.
+
+    Content:
+    {combined_text}
+
+    Title Requirements:
+    - Be 5–10 words long
+    - Capture the core message of the document
+    - Be clear and simple (no jargon)
+    - Add the year if it's relevant or mentioned
+    - Avoid clickbait—make it insightful, not sensational
+
+    Return ONLY the final title text.
     """
-    
-    response = llm.invoke(prompt).content
-    return response.split('\n')[0].strip('"').strip()
+
+    result = llm.invoke(prompt).content.strip()
+    return result.split('\n')[0].strip('"').strip()
+
 
 def generate_keywords(title, audience):
-    """Generate relevant keywords based on title and audience"""
+    """Generate keywords for SEO based on audience"""
     llm = get_llm(temperature=0.5)
-    
     prompt = f"""
     Generate 15 relevant keywords for this title targeting {audience}:
     Title: {title}
-    
-    The keywords should:
-    - Be single words or short phrases
-    - Cover main themes
-    - Be audience-appropriate
-    - Be SEO-friendly
-    
-    Return ONLY comma-separated keywords.
+
+    - Use short words/phrases
+    - Audience-specific
+    - SEO optimized
+    - Comma-separated list only
     """
-    
     response = llm.invoke(prompt).content
-    keywords = [kw.strip() for kw in response.split(",") if kw.strip()]
-    return keywords[:15]
+    return [kw.strip() for kw in response.split(",") if kw.strip()][:15]
 
 def analyze_keywords(keywords, audience):
-    """Analyze how well keywords match the target audience"""
+    """Give short, bullet-pointed analysis of keywords"""
     llm = get_llm(temperature=0.3)
-    
     prompt = f"""
-    Evaluate how each keyword resonates with the target audience: {audience}.
-            Keywords: {", ".join(keywords)}
-           - For each keyword, provide:
-           - How it connects with the audience’s interests, needs, or aspirations.
-            -How it supports their goals, solves their challenges, or enhances their experience.
-        -format your response as a bulleted list, ensuring each keyword is clearly explained in one concise, positive statement that highlights its relevance.
+    Evaluate these keywords for the audience: {audience}
+    - For each keyword, explain how it helps the audience or solves a need.
+    - Format: bulleted list, one line per keyword.
+
+    Keywords: {", ".join(keywords)}
     """
-    
     return llm.invoke(prompt).content
 
+# ----------------------- ARTICLE GENERATION -----------------------
+
 def generate_article(title, keywords, chunks):
-    """Generate article based on title and keywords with error handling and metries"""
-    max_retries = 3
-    retry_count = 0
-    
-    while retry_count < max_retries:
-        try:
-            selected_chunks = chunks[:10] if len(chunks) > 10 else chunks
-            embeddings = GoogleGenerativeAIEmbeddings(
-                model="models/embedding-001",
-                google_api_key=google_api_key
-            )
-            
-            batch_size = 5
-            processed_chunks = []
-            
-            for i in range(0, len(selected_chunks), batch_size):
-                batch = selected_chunks[i:i+batch_size]
-                try:
-                    vector_store_batch = Chroma.from_texts(
-                        texts=batch,
-                        embedding=embeddings,
-                        collection_name=f"temp_collection_{i}"
-                    )
-                    query = f"{title}. Keywords: {', '.join(keywords[:15])}" 
-                    relevant_docs_batch = vector_store_batch.similarity_search(query, k=15)
-                    processed_chunks.extend([doc.page_content for doc in relevant_docs_batch])
-                except Exception as e:
-                    continue
-            if not processed_chunks and selected_chunks:
-                processed_chunks = selected_chunks[:5]  
-            relevant_content = "\n\n".join(processed_chunks[:5]) 
-            llm = get_llm(temperature=0.5)
-            prompt = f"""
-            Write one comprehensive, engaging article about: {title}
-            ** Easy to Read Make the Article more crisper, more engaging style **
-            **make it simple**
-            
-            CONTENT REQUIREMENTS:
-            1. POWERFUL INTRODUCTION
-            - Start with a surprising statistic, bold claim, or thought-provoking question
-            - Example: "In a groundbreaking development, [shocking fact] about [topic]..."
-            
-            2. WELL-STRUCTURED BODY
-            - Clear subheadings every 2-3 paragraphs
-            - Mix of these elements:
-            * Big Picture: Industry-wide implications and future outlook
-            * Practical Impacts: How this affects businesses/individuals
-            * Technical Insights: Simplified explanations of complex aspects
-            - Short paragraphs (max 3 sentences)
-            - Smooth transitions between sections
-            
-            3. CONTENT QUALITY
-            - Use analogies to explain complex ideas
-            - Include 2-3 key statistics/facts
-            - Provide real-world examples or case studies
-            - Naturally integrate keywords: {', '.join(keywords[:10])}  # Limit keywords
-            
-            4. PROFESSIONAL YET ENGAGING TONE
-            - Journalistic quality but accessible
-            - Avoid excessive jargon
-            - Maintain objective perspective
-            
-            5. STRONG CONCLUSION
-            - Summary of key points
-            - Future implications
-            - Call-to-action or discussion prompt
-            
-            WORD COUNT: 500-600 words
-            
-            CONTENT TO REFERENCE:
-            {relevant_content}
-            """
-            
-            return llm.invoke(prompt).content
-            
-        except Exception as e:
-            retry_count += 1
-            if retry_count >= max_retries:
-                st.error(f"Error generating article after {max_retries} attempts: {str(e)}")
-                return "Failed to generate article due to timeout. Please try with a smaller document or fewer keywords."
-            
-            st.warning(f"Attempt {retry_count} failed. Retrying with simplified approach...")
-            time.sleep(2)  
-    
-    return None
+    """Efficient article generation with minimized Chroma use and summarization"""
+    try:
+        embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/embedding-001",
+            google_api_key=google_api_key
+        )
+
+        # Use only selected chunks and create one Chroma store
+        selected_chunks = chunks[:10] if len(chunks) > 10 else chunks
+        vector_store = Chroma.from_texts(
+            texts=selected_chunks,
+            embedding=embeddings,
+            collection_name="temp_collection"
+        )
+
+        query = f"{title}. Keywords: {', '.join(keywords[:10])}"
+        relevant_docs = vector_store.similarity_search(query, k=5)
+        relevant_content = "\n\n".join([doc.page_content for doc in relevant_docs])
+
+        # Now pass to LLM
+        llm = get_llm(temperature=0.5)
+        prompt = f"""
+   
+Write a clear, engaging article (500–600 words) on: {title}
+
+Make it simple, crisp, and easy to follow for a broad audience.
+
+**STRUCTURE & STYLE**
+1. **Introduction** – Start with a bold claim, surprising stat, or thought-provoking question.
+2. **Body** – Use short paragraphs and clear subheadings. Include:
+   - Big Picture (why it matters)
+   - Practical Impacts (real-world relevance)
+   - Simplified Technical Insights
+3. **Content Quality**
+   - Use analogies and real examples
+   - Include 2–3 relevant facts or stats
+   - Naturally weave in keywords: {', '.join(keywords[:10])}
+4. **Tone**
+   - Professional yet conversational
+   - No jargon, no fluff
+5. **Conclusion**
+   - Summarize key points
+   - Share future implications or prompt reflection
+
+Reference this content:
+{relevant_content}
+"""
+
+
+   
+
+        return llm.invoke(prompt).content.strip()
+
+    except Exception as e:
+        st.error(f"Failed to generate article: {str(e)}")
+        return "Error: Unable to generate article."
+
+
 
 def generate_social_post(article_content, post_type, tone, custom_tone, keywords, audience):
     """Generate social media post based on article content and post type"""
@@ -283,7 +243,7 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
                 """,
                 
             "twitter": f"""
-                Write an engaging tweet thread based on this content:
+                Write an **one** engaging tweet thread based on this content:
                 {article_preview}
                 
                 **Requirements:**
@@ -375,43 +335,104 @@ def refine_article(current_article, refinement_instruction, keywords):
     except Exception as e:
         st.error(f"Error refining article: {str(e)}")
         return None
-def humanize_content(content):
-    """Make content sound more like it was written by a human"""
+def humanize_content(content, post_type="default"):
+    """Make content sound natural and human across different formats."""
     try:
         llm = get_llm(temperature=0.7)
-        
-        humanize_prompt = f"""
-       Rewrite the given content so it feels like it was written by a real person—natural, engaging, and conversational. It should have personality, flow smoothly, and sound like something you’d actually hear in a conversation, not AI-generated text.  
 
-        {content}  
+        # Base instructions shared across all formats
+        base_instructions = """
+        Rewrite the content below so it sounds natural, human, and engaging—like something you'd say to a friend. 
+        Keep the original message, but make it flow effortlessly with personality and a conversational tone.
 
-        ### Requirements:  
-        - Keep the core message intact, but make it sound effortless and relatable.  
-        - Use a mix of sentence structures—short, punchy lines alongside longer, more detailed ones.  
-        - Make transitions feel natural, not robotic. If it flows better to mix things up, do it.  
-        - Keep the tone easygoing and conversational—like you’re explaining it to a friend or colleague.  
-        - Add a little personality and perspective—something like: *"We’re already seeing global brands setting up shop to tap into this growth. It’s not just talk—it’s happening."*  
-        - If a rigid list feels too structured, break it up with casual transitions like: *"Oh, and let’s not forget the MSME sector—these small businesses are about to explode with growth."*  
-        - Use natural phrasing, for example, instead of *“India Vision 2028 is creating a dynamic market, constantly evolving,”* go for *“India’s market is changing fast—blink and you’ll miss it.”*  
-        - No fluff, no filler—just clean, engaging writing that feels real.  
+        Guidelines:
+        - Mix short, punchy lines with longer ones.
+        - Use smooth, natural transitions.
+        - Add light personality or perspective where it fits.
+        - Avoid sounding robotic, repetitive, or overly formal.
+        - No fluff. No filler. Just clean, real-sounding writing.
 
-        ### Do NOT:  
-        - Mention that this was rewritten or humanized.  
-        - Change any key facts or introduce made-up details.  
-        - Make it sound stiff, repetitive, or overly polished.  
+        Don’t:
+        - Mention it's rewritten.
+        - Add or change facts.
 
-        Return **only** the rewritten content—no explanations, no formatting notes.  
-
-
+        Return only the rewritten version—no extra notes.
         """
-        
-        return llm.invoke(humanize_prompt).content
+
+        # Format-specific instructions
+        if post_type == "twitter":
+            prompt = f"""
+            {base_instructions}
+
+            ### Format: Twitter Post
+            - Keep it **under 280 characters**
+            - Use casual, punchy phrasing
+            - Add appropriate **emojis** if it fits
+            - Use up to **2–3 relevant hashtags**
+            - Make it scroll-stopping and bold
+            - Avoid long intros or conclusions
+            - Focus on **one big takeaway or hook**
+
+            Content:
+            {content}
+
+            Return ONLY the final tweet text. No intro, no notes.
+            """
+
+        elif post_type == "linkedin":
+            prompt = f"""
+            {base_instructions}
+
+            ### Format: LinkedIn Post
+            - Professional yet friendly
+            - Add a personal perspective or insight
+            - Break into short paragraphs (2–3 lines max)
+            - Add 2–5 relevant hashtags at the end
+            - Length: ~150–300 words max
+            - No fluff—be informative and relatable
+
+            Content:
+            {content}
+
+            Return ONLY the rewritten LinkedIn post.
+            """
+
+        elif post_type == "email":
+            prompt = f"""
+            {base_instructions}
+
+            ### Format: Email Body
+            - Conversational and helpful tone
+            - Clear intro, body, and closing
+            - Add transitions like you're writing to a colleague or friend
+            - End with a CTA or thoughtful note
+            - Length: 150–300 words
+            - No hashtags or emojis
+
+            Content:
+            {content}
+
+            Return ONLY the rewritten email body.
+            """
+
+        else:
+            # Default catch-all (blog post, paragraph, etc.)
+            prompt = f"""
+            {base_instructions}
+
+            Content:
+            {content}
+
+            Return ONLY the rewritten version with a natural, human tone.
+            """
+
+        # Generate the result from LLM
+        return llm.invoke(prompt).content
+
     except Exception as e:
-        st.error(f"Error humanizing content: {str(e)}")
+        return f"Error during humanization: {str(e)}"
+
         return None
-
-
-
 def reset_state_after(state_to_keep):
     """Reset state variables after certain operations"""
     states_to_reset = {
@@ -431,90 +452,85 @@ def reset_state_after(state_to_keep):
 uploaded_file = st.file_uploader("Upload the document", type=["pdf"])
 
 if uploaded_file is not None:
-    if st.button("Generate Title"):
-        with st.spinner("Analyzing document..."):
+    with st.spinner("Processing PDF..."):
+        selected_chunks = pdf_to_limited_chunks(uploaded_file)
+
+    if selected_chunks:
+        if st.button("Generate Title"):
             try:
-                selected_chunks = pdf_to_limited_chunks(uploaded_file)
-                if selected_chunks:
-                    st.session_state.title = generate_title(selected_chunks)
-                    st.session_state.show_keyword_section = True
-                    reset_state_after("title")
-                    st.rerun()
+                title = generate_title(selected_chunks)
+                st.session_state.title = title
+                st.session_state.show_keyword_section = True
+                st.success(f"Generated Title: {title}")
             except Exception as e:
                 st.error(f"Error generating title: {str(e)}")
-    
+
     if st.session_state.title:
         st.markdown(f"## {st.session_state.title}")
-        
+
         if st.session_state.show_keyword_section:
             st.divider()
+
             st.session_state.selected_audience = st.selectbox(
                 "Select Target Audience",
                 ["General Public", "Business Leaders", "Policy Makers", 
                  "Investors", "Media", "Sales Teams", "Marketing Professionals"],
                 index=0
             )
-            
-            # Generate keywords
+
             if st.button("Generate Keywords"):
                 with st.spinner("Generating keywords..."):
                     st.session_state.keywords = generate_keywords(
                         st.session_state.title, 
                         st.session_state.selected_audience
                     )
-                    reset_state_after("keywords")
-                    st.rerun()
-            
-            # Display and manage keywords
+
             if st.session_state.keywords:
                 st.subheader("Keywords")
                 cols = st.columns(4)
                 keywords_to_remove = []
-                
+
                 for i, kw in enumerate(st.session_state.keywords):
-                    with cols[i % 4]: 
+                    with cols[i % 4]:
                         if st.button(f"ˣ {kw}", key=f"del_{kw}"):
-                            keywords_to_remove.append(kw) 
-                
+                            keywords_to_remove.append(kw)
+
                 if keywords_to_remove:
-                    st.session_state.keywords = [kw for kw in st.session_state.keywords 
-                                               if kw not in keywords_to_remove]
-                    reset_state_after("keywords")
-                    st.rerun()
-                custom_key = f"custom_keyword_{len(st.session_state.keywords)}"
+                    st.session_state.keywords = [
+                        kw for kw in st.session_state.keywords
+                        if kw not in keywords_to_remove
+                    ]
+
                 custom_keyword = st.text_input(
-                    "Add custom keyword", 
-                    key=custom_key, 
+                    "Add custom keyword",
+                    key=f"custom_kw_{len(st.session_state.keywords)}",
                     placeholder="Enter a keyword"
                 )
-                
+
                 if st.button("Add Keyword"):
                     if custom_keyword.strip() and custom_keyword.strip() not in st.session_state.keywords:
                         st.session_state.keywords.append(custom_keyword.strip())
-                        reset_state_after("keywords")
-                        st.rerun()
                     elif custom_keyword.strip() in st.session_state.keywords:
-                        st.warning("Keyword already exists in the list")
-                
+                        st.warning("Keyword already exists.")
+
                 st.divider()
-                
-                # Analyze keywords
+
                 if st.button("Analyze Keyword Relevance"):
                     with st.spinner("Analyzing keyword relevance..."):
                         st.session_state.analysis_result = analyze_keywords(
                             st.session_state.keywords,
                             st.session_state.selected_audience
                         )
-                        st.rerun()
-                
+
                 if st.session_state.analysis_result:
                     st.subheader("Keyword Relevance Analysis")
                     st.markdown(st.session_state.analysis_result)
-                    st.divider()
-                
-                # Generate article
+
+                st.divider()
+
+                                # ✅ Generate Article
                 if st.button("Generate Article"):
-                    with st.spinner("Creating article from document..."):
+                    with st.spinner("Generating article..."):
                         article = generate_article(
                             st.session_state.title,
                             st.session_state.keywords,
@@ -523,13 +539,18 @@ if uploaded_file is not None:
                         if article:
                             st.session_state.generated_article = article
                             st.session_state.current_article = article
-                            st.session_state.refined_article = ""
-                            st.rerun()
+                            st.session_state.refined_article = ""  # Reset any old refinements
+                            st.success("Article generated!")
 
-                if st.session_state.generated_article:
-                    st.subheader("Generated Article")
+                # ✅ Display the Current Article (refined or original)
+                if st.session_state.current_article:
+                    article_type = "Refined Article" if st.session_state.refined_article and st.session_state.current_article == st.session_state.refined_article else "Generated Article"
+                    st.subheader(article_type)
                     st.markdown(st.session_state.current_article)
+
                     st.divider()
+
+                    # ✅ Refinement UI
                     st.subheader("Refine Article")
                     with st.form("refinement_form"):
                         user_input = st.text_input(
@@ -539,36 +560,42 @@ if uploaded_file is not None:
                             key=f"refinement_input_{hash(st.session_state.current_article)}"
                         )
                         submitted = st.form_submit_button("Refine Article")
-                    
-                    if submitted and user_input.strip():
-                        with st.spinner("Refining article..."):
-                            refined = refine_article(
-                                st.session_state.current_article,
-                                user_input,
-                                st.session_state.keywords
-                            )
-                            if refined:
-                                st.session_state.refined_article = refined
-                                st.session_state.current_article = refined
-                                st.session_state.refinement_text = ""
-                                st.rerun()
-                    elif submitted:
-                        st.warning("Please enter refinement instructions")
+
+                    if submitted:
+                        if user_input.strip():
+                            with st.spinner("Refining article..."):
+                                refined = refine_article(
+                                    st.session_state.current_article,
+                                    user_input,
+                                    st.session_state.keywords
+                                )
+                                if refined:
+                                    st.session_state.refined_article = refined
+                                    st.session_state.current_article = refined
+                                    st.session_state.refinement_text = ""
+                                    st.success("Article refined!")
+                                    st.rerun()
+                        else:
+                            st.warning("Please enter refinement instructions.")
                     else:
                         st.session_state.refinement_text = user_input
-                    
-                    # Article selection
-                    if st.session_state.refined_article:
+
+                    # ✅ Option to switch between original/refined
+                    if st.session_state.generated_article and st.session_state.refined_article:
                         st.divider()
+                        st.subheader("Choose Version")
                         col1, col2 = st.columns(2)
                         with col1:
                             if st.button("Use Original Article"):
                                 st.session_state.current_article = st.session_state.generated_article
+                                st.session_state.refinement_text = ""
                                 st.rerun()
                         with col2:
                             if st.button("Use Refined Article"):
                                 st.session_state.current_article = st.session_state.refined_article
+                                st.session_state.refinement_text = ""
                                 st.rerun()
+
                 #post type
                     st.divider()
                     st.subheader("Convert to Social Post")
