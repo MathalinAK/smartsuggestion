@@ -109,19 +109,25 @@ def generate_keywords(title, audience):
     response = llm.invoke(prompt).content
     return [kw.strip() for kw in response.split(",") if kw.strip()][:15]
 
+
 def analyze_keywords(keywords, audience):
-    """Give short, bullet-pointed analysis of keywords"""
+    """Return ranked, bulleted, single-line keyword analysis with numeric relevance ratings"""
     llm = get_llm(temperature=0.3)
     prompt = f"""
-    Evaluate these keywords for the audience: {audience}
-    - For each keyword, explain how it helps the audience or solves a need.
-    - Format: bulleted list, one line per keyword.
+    Analyze the following keywords for the audience: {audience}.
+
+    For each keyword:
+    - Write a short explanation of how it helps or relates to the audience.
+    - Rate its relevance on a scale from 1 to 5 (5/5 = most relevant).
+    - If the keywords is irrelevant give them **0/5**
+    - Format each result as a bullet point on a single line like this:
+      - **keyword**: explanation. – Rating (e.g., 5/5)
+
+    Then, sort all keywords by rating in descending order (highest rated first). Do not group them—just a flat, sorted bullet list.
 
     Keywords: {", ".join(keywords)}
     """
     return llm.invoke(prompt).content
-
-# ----------------------- ARTICLE GENERATION -----------------------
 
 def generate_article(title, keywords, chunks):
     """Efficient article generation with minimized Chroma use and summarization"""
@@ -147,47 +153,38 @@ def generate_article(title, keywords, chunks):
         llm = get_llm(temperature=0.5)
         prompt = f"""
    
-Write a clear, engaging article (500–600 words) on: {title}
+            Write a clear, engaging article (500–600 words) on: {title}
+            Make it simple, crisp, and easy to follow for a broad audience.
+            **STRUCTURE & STYLE**
+            1. **Introduction** – Start with a bold claim, surprising stat, or thought-provoking question.
+            2. **Body** – Use short paragraphs and clear subheadings. Include:
+            - Big Picture (why it matters)
+            - Practical Impacts (real-world relevance)
+            - Simplified Technical Insights
+            3. **Content Quality**
+            - Use analogies and real examples
+            - Include 2–3 relevant facts or stats
+            - Naturally weave in keywords: {', '.join(keywords)}
+            4. **Tone**
+            - Professional yet conversational
+            - No jargon, no fluff
+            5. **Conclusion**
+            - Summarize key points
+            - Share future implications or prompt reflection
 
-Make it simple, crisp, and easy to follow for a broad audience.
-
-**STRUCTURE & STYLE**
-1. **Introduction** – Start with a bold claim, surprising stat, or thought-provoking question.
-2. **Body** – Use short paragraphs and clear subheadings. Include:
-   - Big Picture (why it matters)
-   - Practical Impacts (real-world relevance)
-   - Simplified Technical Insights
-3. **Content Quality**
-   - Use analogies and real examples
-   - Include 2–3 relevant facts or stats
-   - Naturally weave in keywords: {', '.join(keywords[:10])}
-4. **Tone**
-   - Professional yet conversational
-   - No jargon, no fluff
-5. **Conclusion**
-   - Summarize key points
-   - Share future implications or prompt reflection
-
-Reference this content:
-{relevant_content}
-"""
-
-
-   
-
+            Reference this content:
+            {relevant_content}
+        """
         return llm.invoke(prompt).content.strip()
 
     except Exception as e:
         st.error(f"Failed to generate article: {str(e)}")
         return "Error: Unable to generate article."
-
-
-
 def generate_social_post(article_content, post_type, tone, custom_tone, keywords, audience):
     """Generate social media post based on article content and post type"""
     try:
         selected_tone = tone.split(" ")[0].lower() if tone != "Custom ✏️" else custom_tone.lower()
-        temperature = 0.7 if selected_tone == "humorous" else 0.5
+        temperature = 0.7 if selected_tone == "modern" else 0.5
         llm = get_llm(temperature=temperature)
         max_content_length = 2000
         article_preview = article_content[:max_content_length] + ("..." if len(article_content) > max_content_length else "")
@@ -211,7 +208,8 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
                 ### Tone-Specific Enhancements:
                 {"- Use emojis and casual language" if selected_tone == "casual" else ""}
                 {"- Maintain professional terminology" if selected_tone == "formal" else ""}
-                {"- Include tasteful humor and wit" if selected_tone == "humorous" else ""}
+              {"- Keep the tone fresh, clear, and up-to-date" if selected_tone == "modern" else ""}
+
                 {"- Follow custom tone description exactly" if tone == "Custom " else ""}
                 
                 Return ONLY the formatted blog post.
@@ -239,7 +237,8 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
                 **Tone Guidelines:**
                 {"- Casual, friendly, with emojis" if selected_tone == "casual" else ""}
                 {"- Professional but engaging" if selected_tone == "formal" else ""}
-                {"- Witty and humorous" if selected_tone == "humorous" else ""}
+               {"- Keep the tone fresh, clear, and up-to-date" if selected_tone == "modern" else ""}
+
                 {"- Custom: " + custom_tone if tone == "Custom " else ""}
                 
                 Return ONLY the LinkedIn post content.
@@ -262,7 +261,8 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
                 **Tone Guidelines:**
                 {"- Casual, conversational" if selected_tone == "casual" else ""}
                 {"- Professional but concise" if selected_tone == "formal" else ""}
-                {"- Humorous and playful" if selected_tone == "humorous" else ""}
+                {"- Keep the tone fresh, clear, and up-to-date" if selected_tone == "modern" else ""}
+
                 {"- Custom: " + custom_tone if tone == "Custom " else ""}
                 """,
                 
@@ -286,7 +286,8 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
                 **Tone Guidelines:**
                 {"- Friendly and approachable" if selected_tone == "casual" else ""}
                 {"- Formal and professional" if selected_tone == "formal" else ""}
-                {"- Lighthearted with humor" if selected_tone == "humorous" else ""}
+               {"- Keep the tone fresh, clear, and up-to-date" if selected_tone == "modern" else ""}
+
                 {"- Custom: " + custom_tone if tone == "Custom " else ""}
                 
                 Format:
@@ -428,10 +429,6 @@ def humanize_content(content):
 
     except Exception as e:
         return f"Error during humanization: {str(e)}"
-
-        return None
-        
-        return llm.invoke(humanize_prompt).content
     except Exception as e:
         st.error(f"Error humanizing content: {str(e)}")
         return None
@@ -485,12 +482,20 @@ if uploaded_file is not None:
                         st.session_state.title, 
                         st.session_state.selected_audience
                     )
-
+                    st.session_state.analysis_result = analyze_keywords(
+                    st.session_state.keywords,
+                    st.session_state.selected_audience
+                )
+            if st.session_state.get("update_analysis", False):
+                st.session_state.analysis_result = analyze_keywords(
+                    st.session_state.keywords,
+                    st.session_state.selected_audience
+                )
+                st.session_state.update_analysis = False
             if st.session_state.keywords:
                 st.subheader("Keywords")
                 cols = st.columns(4)
                 keywords_to_remove = []
-
                 for i, kw in enumerate(st.session_state.keywords):
                     with cols[i % 4]:
                         if st.button(f"ˣ {kw}", key=f"del_{kw}"):
@@ -498,38 +503,34 @@ if uploaded_file is not None:
 
                 if keywords_to_remove:
                     st.session_state.keywords = [
-                        kw for kw in st.session_state.keywords
-                        if kw not in keywords_to_remove
+                        kw for kw in st.session_state.keywords if kw not in keywords_to_remove
                     ]
+                    st.session_state.update_analysis = True
+                    reset_state_after("keywords")
+                    st.rerun()
+                with st.form("add_keyword_form"):
+                    custom_keyword = st.text_input(
+                        "Add custom keyword",
+                        key=f"custom_keyword_{len(st.session_state.keywords)}",
+                        placeholder="Enter a keyword and press Enter"
+                    )
+                    submitted = st.form_submit_button("Add Keyword")
 
-                custom_keyword = st.text_input(
-                    "Add custom keyword",
-                    key=f"custom_kw_{len(st.session_state.keywords)}",
-                    placeholder="Enter a keyword"
-                )
-
-                if st.button("Add Keyword"):
-                    if custom_keyword.strip() and custom_keyword.strip() not in st.session_state.keywords:
-                        st.session_state.keywords.append(custom_keyword.strip())
-                    elif custom_keyword.strip() in st.session_state.keywords:
-                        st.warning("Keyword already exists.")
+                    if submitted or custom_keyword:
+                        new_kw = custom_keyword.strip()
+                        if new_kw and new_kw not in st.session_state.keywords:
+                            st.session_state.keywords.append(new_kw)
+                            st.session_state.update_analysis = True
+                            reset_state_after("keywords")
+                            st.rerun()
+                        elif new_kw:
+                            st.warning("Keyword already exists in the list")
 
                 st.divider()
-
-                if st.button("Analyze Keyword Relevance"):
-                    with st.spinner("Analyzing keyword relevance..."):
-                        st.session_state.analysis_result = analyze_keywords(
-                            st.session_state.keywords,
-                            st.session_state.selected_audience
-                        )
-
                 if st.session_state.analysis_result:
                     st.subheader("Keyword Relevance Analysis")
                     st.markdown(st.session_state.analysis_result)
-
                 st.divider()
-
-                                # ✅ Generate Article
                 if st.button("Generate Article"):
                     with st.spinner("Generating article..."):
                         article = generate_article(
@@ -540,18 +541,15 @@ if uploaded_file is not None:
                         if article:
                             st.session_state.generated_article = article
                             st.session_state.current_article = article
-                            st.session_state.refined_article = ""  # Reset any old refinements
+                            st.session_state.refined_article = ""  
                             st.success("Article generated!")
 
-                # ✅ Display the Current Article (refined or original)
                 if st.session_state.current_article:
                     article_type = "Refined Article" if st.session_state.refined_article and st.session_state.current_article == st.session_state.refined_article else "Generated Article"
                     st.subheader(article_type)
                     st.markdown(st.session_state.current_article)
 
                     st.divider()
-
-                    # ✅ Refinement UI
                     st.subheader("Refine Article")
                     with st.form("refinement_form"):
                         user_input = st.text_input(
@@ -581,7 +579,7 @@ if uploaded_file is not None:
                     else:
                         st.session_state.refinement_text = user_input
 
-                    # ✅ Option to switch between original/refined
+                
                     if st.session_state.generated_article and st.session_state.refined_article:
                         st.divider()
                         st.subheader("Choose Version")
@@ -620,7 +618,7 @@ if uploaded_file is not None:
                         st.subheader("Select Tone")
                         tone = st.radio(
                             "Choose writing style:",
-                            ["Casual ", "Formal ", "Humorous ", "Custom "],
+                            ["Casual ", "Formal ", "modern ", "Custom "],
                             horizontal=True,
                             key="tone_selection",
                             label_visibility="collapsed"
