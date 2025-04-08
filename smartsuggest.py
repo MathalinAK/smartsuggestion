@@ -157,20 +157,17 @@ def generate_article(title, keywords):
         st.error(f"Failed to generate article: {str(e)}")
         return "Error: Unable to generate article."
 
-def generate_social_post(article_content, post_type, tone, custom_tone, keywords, audience):
+def generate_social_post(article_content, post_type, tone, custom_tone, audience):
     """Generate social media post based on article content and post type"""
     try:
         selected_tone = tone.split(" ")[0].lower() if tone != "Custom ✏️" else custom_tone.lower()
         temperature = 0.7 if selected_tone == "modern" else 0.5
         llm = get_llm(temperature=temperature)
-        max_content_length = 2000
-        article_preview = article_content[:max_content_length] + ("..." if len(article_content) > max_content_length else "")
-        limited_keywords = keywords[:5] if len(keywords) > 5 else keywords
         
         post_prompts = {
             "blog": f"""
                 Write a **300-400 word blog post** based on this content for {audience}:
-                {article_preview}
+                {article_content}
                 
                 ### Key Guidelines:
                 - **Tone:** {selected_tone.upper()} ({custom_tone if tone == "Custom ✏️" else tone})
@@ -179,14 +176,14 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
                 - **Fresh Insights** – Focus on unique perspectives and real-world impact
                 - **Conversational Style** – Keep it {selected_tone} and jargon-free
                 - **Credibility** – Back insights with data or examples
-                - **SEO Optimization** – Use keywords: {', '.join(limited_keywords)}
                 - **Call to Action** – End with a discussion prompt
-                -**content has to be like human written and more crisp short etc*
+                - **Content has to be like human written and more crisp short etc**
+                - **Use SEO Optimization**
+                
                 ### Tone-Specific Enhancements:
                 {"- Use emojis and casual language" if selected_tone == "casual" else ""}
                 {"- Maintain professional terminology" if selected_tone == "formal" else ""}
-              {"- Keep the tone fresh, clear, and up-to-date" if selected_tone == "modern" else ""}
-
+                {"- Keep the tone fresh, clear, and up-to-date" if selected_tone == "modern" else ""}
                 {"- Follow custom tone description exactly" if tone == "Custom " else ""}
                 
                 Return ONLY the formatted blog post.
@@ -194,28 +191,22 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
                 
             "linkedin": f"""
                 Write a compelling **300-word LinkedIn post** based on this content that grabs attention and makes people *stop scrolling*. 💥 Ensure it's **engaging**, **thought-provoking**, and **encourages interaction**.
-                {article_preview}
+                {article_content}
                 
                 **Requirements:**
                 - Tone: {selected_tone.upper()} ({custom_tone if tone == "Custom ✏️" else tone})
-           
-                -**Hook:** Start with a bold statement, surprising fact, or a relatable question (1 line).\n
-                -**Make It Skimmable:** Use short sentences, line breaks, and bold key points for easy reading.\n
-                -**Explain Simply:** Describe the concept in a crisp, easy-to-understand way (1 line).\n
-                -**Add a Quick Analogy or Example:** Make it relatable with a simple comparison (1 line).\n
-                -**Call to Action:** End with a thought-provoking question to spark discussion (1 line).\n
-                -**Use Hashtags:** Add relevant hashtags at the end.\n\n
-                -**Tone:**\n
-                -**content has to be like human written and more crisp short etc**
-                - Engaging, simple, and beginner-friendly.\n
-                - Short, punchy, and easy to skim.\n
-                - Informative with a touch of wit—just enough to make it interesting!
-                        
+                - **Hook:** Start with a bold statement, surprising fact, or a relatable question (1 line).
+                - **Make It Skimmable:** Use short sentences, line breaks, and bold key points for easy reading.
+                - **Explain Simply:** Describe the concept in a crisp, easy-to-understand way (1 line).
+                - **Add a Quick Analogy or Example:** Make it relatable with a simple comparison (1 line).
+                - **Call to Action:** End with a thought-provoking question to spark discussion (1 line).
+                - **Use Hashtags:** Add relevant hashtags at the end.
+                - **Content has to be like human written and more crisp short etc**
+                
                 **Tone Guidelines:**
                 {"- Casual, friendly, with emojis" if selected_tone == "casual" else ""}
                 {"- Professional but engaging" if selected_tone == "formal" else ""}
-               {"- Keep the tone fresh, clear, and up-to-date" if selected_tone == "modern" else ""}
-
+                {"- Keep the tone fresh, clear, and up-to-date" if selected_tone == "modern" else ""}
                 {"- Custom: " + custom_tone if tone == "Custom " else ""}
                 
                 Return ONLY the LinkedIn post content.
@@ -223,48 +214,47 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
                 
             "twitter": f"""
                 Write an **one** engaging tweet thread based on this content:
-                {article_preview}
+                {article_content}
                 
                 **Requirements:**
                 - Tone: {selected_tone.upper()} ({custom_tone if tone == "Custom ✏️" else tone})
-                - Keep it **under 240 chars**, natural tone (no all caps).  
-                - **Front-load key message** in the first 3-4 words.  
-                - Spark **emotion, passion, or excitement**.  
-                - Add a **clear CTA** (reply, click, share).  
-                - Use **2-5 hashtags & 1 emoji** for reach.  
-                - Tag someone or add a **link** if relevant.  
+                - Keep it **under 240 chars**, natural tone (no all caps).
+                - **Front-load key message** in the first 3-4 words.
+                - Spark **emotion, passion, or excitement**.
+                - Add a **clear CTA** (reply, click, share).
+                - Use **2-5 hashtags & 1 emoji** for reach.
+                - Tag someone or add a **link** if relevant.
                 - Ensure it's **engaging & optimized for interaction**.
-                - **content has to be like human written and more crisp short etc*
+                - **Content has to be like human written and more crisp short etc**
+                
                 **Tone Guidelines:**
                 {"- Casual, conversational" if selected_tone == "casual" else ""}
                 {"- Professional but concise" if selected_tone == "formal" else ""}
                 {"- Keep the tone fresh, clear, and up-to-date" if selected_tone == "modern" else ""}
-
                 {"- Custom: " + custom_tone if tone == "Custom " else ""}
                 """,
                 
             "email": f"""
                 Write a professional email based on this content:
-                {article_preview}
+                {article_content}
                 
                 **Requirements:**
                 - Tone: {selected_tone.upper()} ({custom_tone if tone == "Custom ✏️" else tone})
-                -**Make It More Personalized eg("  Dear [Name],")
-                Write an engaging, **scannable email** with:
-                - **Compelling hook** (question or bold statement)
-                - **Short paragraphs & bullet points** for readability
-                - **Inverted pyramid structure** leading to a strong **CTA**
-                Use **keywords naturally**:  avoiding repetition.  
-                Ensure a **smooth, conversational flow**.  
-                Write a **clear, action-driven CTA** that encourages interaction.  
-                Optimize for **mobile readability** & **avoid spam triggers**.  
-                Keep it **engaging, relevant & thought-provoking**.
-                **content has to be like human written and more crisp short etc*
+                - **Make It More Personalized** (e.g., "Dear [Name],")
+                - Write an engaging, **scannable email** with:
+                  - **Compelling hook** (question or bold statement)
+                  - **Short paragraphs & bullet points** for readability
+                  - **Inverted pyramid structure** leading to a strong **CTA**
+                - Ensure a **smooth, conversational flow**.
+                - Write a **clear, action-driven CTA** that encourages interaction.
+                - Optimize for **mobile readability** & **avoid spam triggers**.
+                - Keep it **engaging, relevant & thought-provoking**.
+                - **Content has to be like human written and more crisp short etc**
+                
                 **Tone Guidelines:**
                 {"- Friendly and approachable" if selected_tone == "casual" else ""}
                 {"- Formal and professional" if selected_tone == "formal" else ""}
-               {"- Keep the tone fresh, clear, and up-to-date" if selected_tone == "modern" else ""}
-
+                {"- Keep the tone fresh, clear, and up-to-date" if selected_tone == "modern" else ""}
                 {"- Custom: " + custom_tone if tone == "Custom " else ""}
                 
                 Format:
@@ -282,12 +272,10 @@ def generate_social_post(article_content, post_type, tone, custom_tone, keywords
     except Exception as e:
         st.error(f"Error generating post: {str(e)}")
         return None
-
-def refine_article(current_article, refinement_instruction, keywords):
+def refine_article(current_article, refinement_instruction):
     """Refine article based on user instructions"""
     try:
         llm = get_llm(temperature=0.4)
-        limited_keywords = keywords[:5] if len(keywords) > 5 else keywords
         
         refine_prompt = f"""
         Please refine the following article based on these specific instructions:
@@ -302,8 +290,7 @@ def refine_article(current_article, refinement_instruction, keywords):
         1. Make only the requested changes - don't modify other parts
         2. Keep the same overall structure and tone
         3. Maintain all key facts and information
-        4. Preserve the keyword integration: {', '.join(limited_keywords)}
-        5. Highlight changes by bolding new or modified text
+        4. Highlight changes by bolding new or modified text
         
         OUTPUT REQUIREMENTS:
         - Return the complete revised article
@@ -316,7 +303,6 @@ def refine_article(current_article, refinement_instruction, keywords):
     except Exception as e:
         st.error(f"Error refining article: {str(e)}")
         return None
-    
 def humanize_content(content):
     """Make content sound more like it was written by a human"""
     try:
@@ -347,6 +333,7 @@ def humanize_content(content):
                 - Make it scroll-stopping and bold
                 - Avoid long intros or conclusions
                 - Focus on **one big takeaway or hook**
+                - Add **2–5 relevant hashtags** at the end
             Content:
             {content}
             Return ONLY the final tweet text. No intro, no notes.
@@ -358,9 +345,9 @@ def humanize_content(content):
             - Professional yet friendly
             - Add a personal perspective or insight
             - Break into short paragraphs (2–3 lines max)
-            - Add 2–5 relevant hashtags at the end
             - Length: ~150–300 words max
             - No fluff—be informative and relatable
+            - Add 2–5 relevant hashtags at the end
             Content:
             {content}
             Return ONLY the rewritten LinkedIn post.
@@ -508,13 +495,13 @@ if uploaded_file is not None:
                     st.markdown(st.session_state.current_article)
 
                     st.divider()
-                    st.subheader(" Refine Article")
+                    st.subheader("Refine Article")
                     with st.form("refinement_form"):
                         user_input = st.text_input(
                             "Enter refinement instructions",
                             value=st.session_state.refinement_text,
                             placeholder="What would you like to change in the article?",
-                            key=f"refinement_input_{hash(st.session_state.current_article)}"
+                            key=f"refinement_input_{hash(st.session_state.current_article)}" 
                         )
                         submitted = st.form_submit_button("Refine Article")
 
@@ -523,14 +510,13 @@ if uploaded_file is not None:
                             with st.spinner("Refining article..."):
                                 refined = refine_article(
                                     st.session_state.current_article,
-                                    user_input,
-                                    st.session_state.keywords
+                                    user_input
                                 )
                                 if refined:
                                     st.session_state.refined_article = refined
                                     st.session_state.current_article = refined
                                     st.session_state.refinement_text = ""
-                                    st.success(" Article refined!")
+                                    st.success("Article refined!")
                                     st.rerun()
                         else:
                             st.warning("Please enter refinement instructions.")
@@ -596,8 +582,7 @@ if uploaded_file is not None:
                                     st.session_state.current_article,
                                     st.session_state.post_type,
                                     st.session_state.selected_tone,
-                                    st.session_state.custom_tone if tone == "Custom " else "",
-                                    st.session_state.keywords,
+                                    st.session_state.custom_tone if st.session_state.selected_tone == "Custom ✏️" else "",
                                     st.session_state.selected_audience
                                 )
                                 
