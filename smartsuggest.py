@@ -26,7 +26,7 @@ if not google_api_key:
     st.error("Please create a .env file with your GOOGLE_API_KEY")
     st.stop()
 
-# Set default session state
+
 default_states = {
     "keywords": [], "title": "", "show_keyword_section": False, "all_chunks": [],
     "selected_audience": "General Public", "analysis_result": "", "generated_article": "",
@@ -50,7 +50,7 @@ def pdf_to_limited_chunks(pdf_file, chunk_size=700, chunk_overlap=100):
         splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         all_chunks = splitter.split_text(text)
         st.session_state.all_chunks = all_chunks
-        return all_chunks[:10]  # Limit initial processing
+        return all_chunks[:10]  
     except Exception as e:
         st.error(f"Error processing PDF: {str(e)}")
         return []
@@ -62,51 +62,41 @@ def generate_title(chunks):
     """Generate a more engaging, insightful title from document content."""
     if not chunks:
         return ""
-
     llm = get_llm(temperature=0.9) 
     selected_chunks = chunks[:5] + chunks[-5:] if len(chunks) >= 10 else chunks
     combined_text = "\n\n".join(selected_chunks)
-
     prompt = f"""
-    You are a professional content strategist.
-
-    Based on the following document excerpts, generate ONE **engaging and clear** article title.
-
-    Content:
-    {combined_text}
-
-    🔹 The title should:
-    - Be 6–12 words max
-    - Capture the **main problem or opportunity**
-    - Use strong, simple language (no fluff or jargon)
-    - Feel like a **headline** you'd want to click
-    Examples of good titles:
-    - "Why Smart Cities May Fail Without AI (2024)"
-    - "How Climate Startups Are Saving the Planet"
-    - "The Truth About Data Privacy in 2025"
-
-    Return ONLY the final title text.
+        You are a professional content strategist.
+        Based on the following document excerpts, generate ONE **engaging and clear** article title.
+        Content:
+        {combined_text}
+        🔹 The title should:
+        - Be 6–12 words max
+        - Capture the **main problem or opportunity**
+        - Use strong, simple language (no fluff or jargon)
+        - Feel like a **headline** you'd want to click
+        Examples of good titles:
+        - "Why Smart Cities May Fail Without AI (2024)"
+        - "How Climate Startups Are Saving the Planet"
+        - "The Truth About Data Privacy in 2025"
+        Return ONLY the final title text.
     """
-
     result = llm.invoke(prompt).content.strip()
     return result.split('\n')[0].strip('"').strip()
-
 
 def generate_keywords(title, audience):
     """Generate keywords for SEO based on audience"""
     llm = get_llm(temperature=0.5)
     prompt = f"""
-    Generate 15 relevant keywords for this title targeting {audience}:
-    Title: {title}
-
-    - Use short words/phrases
-    - Audience-specific
-    - SEO optimized
-    - Comma-separated list only
+        Generate 15 relevant keywords for this title targeting {audience}:
+        Title: {title}
+        - Use short words/phrases
+        - Audience-specific
+        - SEO optimized
+        - Comma-separated list only
     """
     response = llm.invoke(prompt).content
     return [kw.strip() for kw in response.split(",") if kw.strip()][:15]
-
 
 def analyze_keywords(keywords, audience):
     """Return ranked, bulleted, single-line keyword analysis with numeric relevance ratings"""
