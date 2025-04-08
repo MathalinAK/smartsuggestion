@@ -41,8 +41,6 @@ for key, value in default_states.items():
 st.set_page_config(page_title="AI Post Generator", layout="centered")
 st.title("Post Generator")
 
-# ---------------------------- Utilities ----------------------------
-
 @st.cache_data(show_spinner=False)
 def pdf_to_limited_chunks(pdf_file, chunk_size=700, chunk_overlap=100):
     """Extract text from PDF and split into chunks (first 5 returned)"""
@@ -328,51 +326,44 @@ def refine_article(current_article, refinement_instruction, keywords):
     except Exception as e:
         st.error(f"Error refining article: {str(e)}")
         return None
+    
 def humanize_content(content):
     """Make content sound more like it was written by a human"""
     try:
         llm = get_llm(temperature=0.7)
         
         humanize_prompt = f"""
-       Rewrite the content below so it sounds natural, human, and engaging—like something you'd say to a friend. 
-        Keep the original message, but make it flow effortlessly with personality and a conversational tone.
-
-        Guidelines:
-        - Mix short, punchy lines with longer ones.
-        - Use smooth, natural transitions.
-        - Add light personality or perspective where it fits.
-        - Avoid sounding robotic, repetitive, or overly formal.
-        - No fluff. No filler. Just clean, real-sounding writing.
-
-        Don’t:
-        - Mention it's rewritten.
-        - Add or change facts.
-
-        Return only the rewritten version—no extra notes.
-        """
+            Rewrite the content below so it sounds natural, human, and engaging—like something you'd say to a friend. 
+            Keep the original message, but make it flow effortlessly with personality and a conversational tone.
+            Guidelines:
+            - Mix short, punchy lines with longer ones.
+            - Use smooth, natural transitions.
+            - Add light personality or perspective where it fits.
+            - Avoid sounding robotic, repetitive, or overly formal.
+            - No fluff. No filler. Just clean, real-sounding writing.
+            Don’t:
+            - Mention it's rewritten.
+            - Add or change facts.
+            Return only the rewritten version—no extra notes.
+            """
         if post_types == "twitter":
             prompt = f"""
             { humanize_prompt}
-
             ### Format: Twitter Post
-            - Keep it **under 280 characters**
-            - Use casual, punchy phrasing
-            - Add appropriate **emojis** if it fits
-            - Use up to **2–3 relevant hashtags**
-            - Make it scroll-stopping and bold
-            - Avoid long intros or conclusions
-            - Focus on **one big takeaway or hook**
-
+                - Keep it **under 280 characters**
+                - Use casual, punchy phrasing
+                - Add appropriate **emojis** if it fits
+                - Use up to **2–3 relevant hashtags**
+                - Make it scroll-stopping and bold
+                - Avoid long intros or conclusions
+                - Focus on **one big takeaway or hook**
             Content:
             {content}
-
             Return ONLY the final tweet text. No intro, no notes.
             """
-
         elif post_types == "linkedin":
             prompt = f"""
             { humanize_prompt}
-
             ### Format: LinkedIn Post
             - Professional yet friendly
             - Add a personal perspective or insight
@@ -380,17 +371,13 @@ def humanize_content(content):
             - Add 2–5 relevant hashtags at the end
             - Length: ~150–300 words max
             - No fluff—be informative and relatable
-
             Content:
             {content}
-
             Return ONLY the rewritten LinkedIn post.
             """
-
         elif post_types == "email":
             prompt = f"""
             { humanize_prompt}
-
             ### Format: Email Body
             - Conversational and helpful tone
             - Clear intro, body, and closing
@@ -398,29 +385,24 @@ def humanize_content(content):
             - End with a CTA or thoughtful note
             - Length: 150–300 words
             - No hashtags or emojis
-
             Content:
             {content}
-
             Return ONLY the rewritten email body.
             """
-
         else:
             prompt = f"""
             { humanize_prompt}
-
             Content:
             {content}
-
             Return ONLY the rewritten version with a natural, human tone.
             """
         return llm.invoke(prompt).content
-
     except Exception as e:
         return f"Error during humanization: {str(e)}"
     except Exception as e:
         st.error(f"Error humanizing content: {str(e)}")
         return None
+    
 def reset_state_after(state_to_keep):
     """Reset state variables after certain operations"""
     states_to_reset = {
@@ -429,10 +411,8 @@ def reset_state_after(state_to_keep):
         "keywords": ["analysis_result", "generated_article", "refined_article", 
                     "current_article", "generated_post"],
     }
-    
     for state_to_reset in states_to_reset.get(state_to_keep, []):
         st.session_state[state_to_reset] = ""
-    
     if state_to_keep == "keywords":
         st.session_state.post_type = None
 
