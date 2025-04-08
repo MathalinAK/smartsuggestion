@@ -115,44 +115,32 @@ def analyze_keywords(keywords, audience):
     llm = get_llm(temperature=0.3)
     prompt = f"""
     Analyze the following keywords for the audience: {audience}.
-
     For each keyword:
-    - Write a short explanation of how it helps or relates to the audience.
-    - Rate its relevance on a scale from 1 to 5 (5/5 = most relevant).
-    - If the keywords is irrelevant give them **0/5**
-    - Format each result as a bullet point on a single line like this:
-      - **keyword**: explanation. – Rating (e.g., 5/5)
-
+    Write a short explanation of how it helps or relates to the audience.
+    Rate its relevance as a percentage (e.g., 100% = most relevant).
+    If the keyword is irrelevant, give it 0%.
+    Format each result as a bullet point on a single line like this:
+    keyword: explanation. – Rating (e.g., 100%)
     Then, sort all keywords by rating in descending order (highest rated first). Do not group them—just a flat, sorted bullet list.
-
     Keywords: {", ".join(keywords)}
     """
     return llm.invoke(prompt).content
 
-def generate_article(title, keywords, chunks):
-    """Efficient article generation with minimized Chroma use and summarization"""
+def generate_article(title, keywords):
     try:
         embeddings = GoogleGenerativeAIEmbeddings(
             model="models/embedding-001",
             google_api_key=google_api_key
         )
-
-        # Use only selected chunks and create one Chroma store
-        selected_chunks = chunks[:10] if len(chunks) > 10 else chunks
-        vector_store = Chroma.from_texts(
-            texts=selected_chunks,
-            embedding=embeddings,
-            collection_name="temp_collection"
+        vector_store = Chroma(
+            embedding_function=embeddings,
+            persist_directory="C:/Users/MATHALIN/smartsuggestion/chroma_db"
         )
-
-        query = f"{title}. Keywords: {', '.join(keywords[:10])}"
+        query = f"{title}. Keywords: {', '.join(keywords)}"
         relevant_docs = vector_store.similarity_search(query, k=5)
         relevant_content = "\n\n".join([doc.page_content for doc in relevant_docs])
-
-        # Now pass to LLM
         llm = get_llm(temperature=0.5)
         prompt = f"""
-   
             Write a clear, engaging article (500–600 words) on: {title}
             Make it simple, crisp, and easy to follow for a broad audience.
             **STRUCTURE & STYLE**
@@ -180,6 +168,7 @@ def generate_article(title, keywords, chunks):
     except Exception as e:
         st.error(f"Failed to generate article: {str(e)}")
         return "Error: Unable to generate article."
+
 def generate_social_post(article_content, post_type, tone, custom_tone, keywords, audience):
     """Generate social media post based on article content and post type"""
     try:
@@ -535,14 +524,13 @@ if uploaded_file is not None:
                     with st.spinner("Generating article..."):
                         article = generate_article(
                             st.session_state.title,
-                            st.session_state.keywords,
-                            st.session_state.all_chunks
+                            st.session_state.keywords
                         )
                         if article:
                             st.session_state.generated_article = article
                             st.session_state.current_article = article
                             st.session_state.refined_article = ""  
-                            st.success("Article generated!")
+                            st.success(" Article generated!")
 
                 if st.session_state.current_article:
                     article_type = "Refined Article" if st.session_state.refined_article and st.session_state.current_article == st.session_state.refined_article else "Generated Article"
@@ -550,7 +538,7 @@ if uploaded_file is not None:
                     st.markdown(st.session_state.current_article)
 
                     st.divider()
-                    st.subheader("Refine Article")
+                    st.subheader(" Refine Article")
                     with st.form("refinement_form"):
                         user_input = st.text_input(
                             "Enter refinement instructions",
@@ -572,14 +560,13 @@ if uploaded_file is not None:
                                     st.session_state.refined_article = refined
                                     st.session_state.current_article = refined
                                     st.session_state.refinement_text = ""
-                                    st.success("Article refined!")
+                                    st.success(" Article refined!")
                                     st.rerun()
                         else:
                             st.warning("Please enter refinement instructions.")
                     else:
                         st.session_state.refinement_text = user_input
 
-                
                     if st.session_state.generated_article and st.session_state.refined_article:
                         st.divider()
                         st.subheader("Choose Version")
@@ -594,6 +581,7 @@ if uploaded_file is not None:
                                 st.session_state.current_article = st.session_state.refined_article
                                 st.session_state.refinement_text = ""
                                 st.rerun()
+
 
                 #post type
                     st.divider()
