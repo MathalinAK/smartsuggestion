@@ -303,11 +303,11 @@ def refine_article(current_article, refinement_instruction):
     except Exception as e:
         st.error(f"Error refining article: {str(e)}")
         return None
-def humanize_content(content):
+def humanize_content(content, post_types):
     """Make content sound more like it was written by a human"""
     try:
         llm = get_llm(temperature=0.7)
-        
+        print("*****")
         humanize_prompt = f"""
             Rewrite the content below so it sounds natural, human, and engaging—like something you'd say to a friend. 
             Keep the original message, but make it flow effortlessly with personality and a conversational tone.
@@ -323,6 +323,7 @@ def humanize_content(content):
             Return only the rewritten version—no extra notes.
             """
         if post_types == "twitter":
+            print("222222")
             prompt = f"""
             { humanize_prompt}
             ### Format: Twitter Post
@@ -339,19 +340,23 @@ def humanize_content(content):
             Return ONLY the final tweet text. No intro, no notes.
             """
         elif post_types == "linkedin":
+            print("*********")
             prompt = f"""
             { humanize_prompt}
             ### Format: LinkedIn Post
-            - Professional yet friendly
+            - Professional yet friendly and end with 2–5 relevant hashtags.”
             - Add a personal perspective or insight
             - Break into short paragraphs (2–3 lines max)
             - Length: ~150–300 words max
             - No fluff—be informative and relatable
-            - Add 2–5 relevant hashtags at the end
+            - Add some emojis
+            IMPORTANT:
+            - Add **2–5 relevant hashtags** at the end.
             Content:
             {content}
             Return ONLY the rewritten LinkedIn post.
             """
+            print(")))))))))))))")
         elif post_types == "email":
             prompt = f"""
             { humanize_prompt}
@@ -594,7 +599,7 @@ if uploaded_file is not None:
                             st.markdown(st.session_state.generated_post)
                         if st.button(" Humanize Post", help="Make the post sound more naturally human-written"):
                                 with st.spinner("Making post sound more human..."):
-                                    humanized_post = humanize_content(st.session_state.generated_post)
+                                    humanized_post = humanize_content(st.session_state.generated_post, st.session_state.post_type  )
                                     if humanized_post:
                                         st.session_state.generated_post = humanized_post
                                         st.success("Post has been humanized!")
