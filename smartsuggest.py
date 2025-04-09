@@ -307,7 +307,6 @@ def humanize_content(content, post_types):
     """Make content sound more like it was written by a human"""
     try:
         llm = get_llm(temperature=0.7)
-        print("*****")
         humanize_prompt = f"""
             Rewrite the content below so it sounds natural, human, and engaging—like something you'd say to a friend. 
             Keep the original message, but make it flow effortlessly with personality and a conversational tone.
@@ -323,7 +322,6 @@ def humanize_content(content, post_types):
             Return only the rewritten version—no extra notes.
             """
         if post_types == "twitter":
-            print("222222")
             prompt = f"""
             { humanize_prompt}
             ### Format: Twitter Post
@@ -340,7 +338,6 @@ def humanize_content(content, post_types):
             Return ONLY the final tweet text. No intro, no notes.
             """
         elif post_types == "linkedin":
-            print("*********")
             prompt = f"""
             { humanize_prompt}
             ### Format: LinkedIn Post
@@ -356,7 +353,6 @@ def humanize_content(content, post_types):
             {content}
             Return ONLY the rewritten LinkedIn post.
             """
-            print(")))))))))))))")
         elif post_types == "email":
             prompt = f"""
             { humanize_prompt}
